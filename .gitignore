@@ -1,0 +1,29 @@
+# Внутрішні документи не потрапляють у репозиторій.
+# Правило стоїть від першого коміту: пізніше знадобився б git rm --cached,
+# а в запушеному репо — переписування історії.
+*.md
+!README.md
+
+# Секрети
+.env
+.env.*
+!.env.example
+*.local
+
+# Ключі — жодного в репозиторії, включно з devnet-ключем merchant-sim
+*.keypair.json
+id.json
+*.pem
+
+# Збірка й залежності
+node_modules/
+dist/
+build/
+coverage/
+.vercel/
+*.tsbuildinfo
+
+# Логи й дампи
+*.log
+npm-debug.log*
+pnpm-debug.log*
