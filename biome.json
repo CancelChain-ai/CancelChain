@@ -14,7 +14,8 @@
     "rules": {
       "preset": "recommended",
       "suspicious": {
-        "noExplicitAny": "error"
+        "noExplicitAny": "error",
+        "noUnknownAtRules": "off"
       },
       "style": {
         "noNonNullAssertion": "error"
