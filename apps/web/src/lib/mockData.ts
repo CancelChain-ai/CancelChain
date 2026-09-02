@@ -1,3 +1,25 @@
+/**
+ * Синтетичні дані прототипу M0. Ончейну під ними немає взагалі: кнопка
+ * «Скасувати» нічого не скасовує, і жоден `SC-*` на цьому файлі не міряється.
+ *
+ * **Усі назви мерчантів вигадані.** Жодної справжньої компанії тут бути не може:
+ * демо, у якому чужа підписка показана як керована звідси, робить неправдиве
+ * твердження про цю компанію.
+ *
+ * Дата, від якої все відлічується, — 2 вересня 2026. Числа узгоджені між собою
+ * за чотирма правилами, і кожне з них перевіряється очима при кожній правці:
+ *
+ * 1. `periodStarted` + `periodDays` = `nextCharge` (для паузи —
+ *    `nextChargeOnResume`, для «не поновлювати» — `endsOn`).
+ * 2. Списання йдуть із кроком у період: сусідні `Charged` рівно за `periodDays`.
+ * 3. `usedThisPeriod` дорівнює сумі списань **на дату `periodStarted` або
+ *    пізніше**. Нуль означає, що в поточному періоді списань не було.
+ * 4. Стрічка не виходить за 90 днів — рівно те вікно, яке обіцяє напис під нею
+ *    (`FR-029`). Те, що старше, лишається в мережі й видно лише в полі
+ *    `givenOn`, яке приходить зі стану дозволу, а не зі стрічки.
+ *
+ * Сума в шапці ніде не написана: `allowedTotal()` складає стелі активних.
+ */
 export type PermissionState = 'active' | 'ending' | 'paused' | 'unsupported' | 'cancelled'
 
 export type Asset = 'USDC' | 'CPRL'
@@ -105,12 +127,7 @@ export const PERMISSIONS: Permission[] = [
       activity: [
         { date: '28 Aug 2026', description: 'Charged', amount: 45, rejected: false },
         { date: '29 Jul 2026', description: 'Charged', amount: 45, rejected: false },
-        {
-          date: '30 Mar 2026',
-          description: 'Permission given — up to 45.00 USDC every 30 days',
-          amount: null,
-          rejected: false,
-        },
+        { date: '29 Jun 2026', description: 'Charged', amount: 45, rejected: false },
       ],
     },
   },
@@ -132,12 +149,7 @@ export const PERMISSIONS: Permission[] = [
       activity: [
         { date: '12 Aug 2026', description: 'Charged', amount: 12, rejected: false },
         { date: '13 Jul 2026', description: 'Charged', amount: 12, rejected: false },
-        {
-          date: '13 May 2026',
-          description: 'Permission given — up to 12.00 USDC every 30 days',
-          amount: null,
-          rejected: false,
-        },
+        { date: '13 Jun 2026', description: 'Charged', amount: 12, rejected: false },
       ],
     },
   },
@@ -157,7 +169,7 @@ export const PERMISSIONS: Permission[] = [
       periodStarted: '22 Aug 2026',
       givenOn: '23 Jul 2026',
       activity: [
-        { date: '22 Aug 2026', description: 'Charged', amount: 11.5, rejected: false },
+        { date: '24 Jul 2026', description: 'Charged', amount: 11.5, rejected: false },
         {
           date: '23 Jul 2026',
           description: 'Permission given — up to 11.50 USDC every 30 days',
@@ -185,12 +197,7 @@ export const PERMISSIONS: Permission[] = [
       activity: [
         { date: '15 Aug 2026', description: 'Charged', amount: 8, rejected: false },
         { date: '16 Jul 2026', description: 'Charged', amount: 8, rejected: false },
-        {
-          date: '17 Feb 2026',
-          description: 'Permission given — up to 8.00 USDC every 30 days',
-          amount: null,
-          rejected: false,
-        },
+        { date: '16 Jun 2026', description: 'Charged', amount: 8, rejected: false },
       ],
     },
   },
@@ -211,12 +218,7 @@ export const PERMISSIONS: Permission[] = [
       activity: [
         { date: '10 Aug 2026', description: 'Charged', amount: 4, rejected: false },
         { date: '11 Jul 2026', description: 'Charged', amount: 4, rejected: false },
-        {
-          date: '11 Jan 2026',
-          description: 'Permission given — up to 4.00 USDC every 30 days',
-          amount: null,
-          rejected: false,
-        },
+        { date: '11 Jun 2026', description: 'Charged', amount: 4, rejected: false },
       ],
     },
   },
@@ -238,13 +240,8 @@ export const PERMISSIONS: Permission[] = [
       givenOn: '2 Apr 2026',
       activity: [
         { date: '19 Aug 2026', description: 'Paused by you', amount: null, rejected: false },
-        { date: '21 Jul 2026', description: 'Charged', amount: 19, rejected: false },
-        {
-          date: '2 Apr 2026',
-          description: 'Permission given — up to 19.00 USDC every 30 days',
-          amount: null,
-          rejected: false,
-        },
+        { date: '19 Jul 2026', description: 'Charged', amount: 19, rejected: false },
+        { date: '19 Jun 2026', description: 'Charged', amount: 19, rejected: false },
       ],
     },
   },
