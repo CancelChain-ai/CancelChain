@@ -55,6 +55,38 @@ describe('фактично встановлені версії', () => {
   })
 })
 
+/**
+ * `@solana/react` живе в `apps/web` (`T017`), тож перевіряти його встановлену
+ * версію треба саме там. Другий kit, який приїхав би разом із ним, зробив би
+ * дві копії branded-типів адреси — і мовчазний розкол на межі браузер/пакет.
+ */
+describe('@solana/react у apps/web', () => {
+  const webRoot = new URL('../../../apps/web/', import.meta.url)
+
+  it(`встановлений рівно ${PINNED['@solana/react']}`, () => {
+    const pkg = readJson(new URL('node_modules/@solana/react/package.json', webRoot))
+    expect(pkg.version).toBe(PINNED['@solana/react'])
+  })
+
+  it('web бере обидва пакети з каталогу, а не власним рядком версії', () => {
+    const pkg = readJson(new URL('package.json', webRoot))
+    const deps = pkg.dependencies as Record<string, string>
+    expect(deps['@solana/react']).toBe('catalog:')
+    expect(deps['@solana/kit']).toBe('catalog:')
+  })
+
+  it('kit у web — той самий 7.1.1, що й у packages/chain', () => {
+    const kit = readJson(new URL('node_modules/@solana/kit/package.json', webRoot))
+    expect(kit.version).toBe(PINNED['@solana/kit'])
+  })
+
+  it('peer-вимога @solana/react лишається на kit ^7', () => {
+    const pkg = readJson(new URL('node_modules/@solana/react/package.json', webRoot))
+    const peers = pkg.peerDependencies as Record<string, string>
+    expect(peers['@solana/kit']).toBe('^7.1.1')
+  })
+})
+
 describe('peer-вимога SDK програми', () => {
   it('лишається ^7 — саме вона робить kit 8 недопустимим', () => {
     const sdk = readJson(

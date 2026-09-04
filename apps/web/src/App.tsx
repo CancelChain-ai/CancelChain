@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { WalletMenu } from './chain/WalletMenu'
 import { PERMISSIONS, type Permission, SUBSCRIBE_GRANT } from './lib/mockData'
 import Merchant from './pages/Merchant'
 import Subscribe from './pages/Subscribe'
@@ -63,25 +64,28 @@ const App = () => {
               Demo — four screens, invented data, nothing on a network.
             </span>
           </button>
-          <nav className="flex flex-wrap gap-x-5 gap-y-1">
-            {TABS.map((tab) => {
-              const active = view === tab.id || (view === 'detail' && tab.id === 'subscriptions')
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setView(tab.id)}
-                  className={`text-[13px] transition-colors duration-150 ${
-                    active
-                      ? 'text-ink underline underline-offset-[6px]'
-                      : 'text-ink/45 hover:text-ink/70'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              )
-            })}
-          </nav>
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            <nav className="flex flex-wrap gap-x-5 gap-y-1">
+              {TABS.map((tab) => {
+                const active = view === tab.id || (view === 'detail' && tab.id === 'subscriptions')
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setView(tab.id)}
+                    className={`text-[13px] transition-colors duration-150 ${
+                      active
+                        ? 'text-ink underline underline-offset-[6px]'
+                        : 'text-ink/45 hover:text-ink/70'
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                )
+              })}
+            </nav>
+            <WalletMenu />
+          </div>
         </div>
       </header>
 

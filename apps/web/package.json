@@ -11,14 +11,27 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@cancelchain/chain": "workspace:*",
+    "@solana/kit": "catalog:",
+    "@solana/react": "catalog:",
+    "@solana/wallet-standard-chains": "1.1.2",
+    "@solana/wallet-standard-features": "1.4.0",
+    "@wallet-standard/features": "1.1.1",
+    "@wallet-standard/react": "1.0.3",
+    "@wallet-standard/ui": "1.0.3",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
+    "@testing-library/dom": "10.4.1",
+    "@testing-library/react": "16.3.3",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "5.2.0",
+    "@wallet-standard/app": "1.1.1",
+    "@wallet-standard/base": "1.1.1",
     "autoprefixer": "10.5.4",
+    "jsdom": "30.0.1",
     "postcss": "8.5.26",
     "tailwindcss": "3.4.19",
     "typescript": "5.9.3",
