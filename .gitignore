@@ -14,6 +14,8 @@
 *.keypair.json
 id.json
 *.pem
+# Тека, яку .env.example пропонує під ключ merchant-sim
+.secrets/
 
 # Збірка й залежності
 node_modules/
