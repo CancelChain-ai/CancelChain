@@ -82,6 +82,12 @@ export type ProgramAccountsRpc = {
 export type AllowanceReader = {
   rpc: ProgramAccountsRpc
   programAddress: Address
+  /**
+   * Розрахунковий актив (`FR-020`). Береться з конфігурації, а не з константи:
+   * mainnet-USDC і devnet-USDC — різні міни, і зашитий рядок означав би, що на
+   * devnet підтримуваним не буде **жоден** дозвіл.
+   */
+  usdcMint: Address
 }
 
 /** Чому акаунт не став карткою. Ніколи не мовчазне зникнення з переліку. */
@@ -101,11 +107,28 @@ export type UnreadableAllowance = {
   detail: string
 }
 
+/**
+ * Дозвіл із позначкою активу — `FR-020`.
+ *
+ * Розрахунковий актив у продукту один, але гаманець може мати дозвіл у будь-якому
+ * іншому: його видав чужий застосунок, і `FR-006` вимагає показати його разом з
+ * усіма. Тому такий дозвіл не фільтрується й не ховається в `unreadable` —
+ * він у списку з `assetSupported: false`.
+ *
+ * Наслідок для інтерфейсу (`T023`, `T024`): над таким дозволом не пропонується
+ * жодної дії, **крім скасування**. Скасування лишається завжди — саме воно і є
+ * причиною показувати чужий актив: інакше єдиний спосіб закрити такий дозвіл
+ * зник би разом із карткою.
+ */
+export type ReadAllowance = Allowance & {
+  assetSupported: boolean
+}
+
 export type AllowanceReadResult = {
   /** Слот, на якому прочитано **дозволи**. Плани читаються окремим запитом, пізніше. */
   slot: number
   syncedAt: string
-  allowances: Allowance[]
+  allowances: ReadAllowance[]
   /**
    * Акаунти власника, які під карткою показати не вийшло. Порожній масив — це
    * твердження «показано все»; непорожній зобов'язує інтерфейс сказати, скільки
@@ -311,7 +334,8 @@ function byAddress(a: string, b: string): number {
  * Один запит на самі дозволи (звідси й слот, спільний для всього списку) плюс
  * `getMultipleAccounts` по планах, коли серед дозволів є підписки. Жоден акаунт
  * не зникає мовчки: усе, що не стало карткою, лежить у `unreadable` з названою
- * причиною.
+ * причиною, а дозвіл у чужому активі лишається в списку з `assetSupported: false`
+ * (`FR-020`).
  */
 export async function readAllowances(
   reader: AllowanceReader,
@@ -346,7 +370,7 @@ export async function readAllowances(
     commitment: options.commitment,
   })
 
-  const allowances: Allowance[] = []
+  const allowances: ReadAllowance[] = []
   const unreadable: UnreadableAllowance[] = []
   for (const entry of decoded) {
     if (entry.kind === 'unknown') {
@@ -356,14 +380,13 @@ export async function readAllowances(
     }
     const plan = entry.kind === 'subscription' ? planRefs.get(entry.address) : undefined
     try {
-      allowances.push(
-        toAllowance(entry, {
-          slot,
-          syncedAt,
-          ...(plan === undefined ? {} : { plan }),
-          ...(options.now === undefined ? {} : { now: options.now }),
-        }),
-      )
+      const allowance = toAllowance(entry, {
+        slot,
+        syncedAt,
+        ...(plan === undefined ? {} : { plan }),
+        ...(options.now === undefined ? {} : { now: options.now }),
+      })
+      allowances.push({ ...allowance, assetSupported: allowance.mint === reader.usdcMint })
     } catch (error) {
       unreadable.push(unreadableFrom(entry.address, reasonFor(error), error))
     }

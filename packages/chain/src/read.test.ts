@@ -188,7 +188,7 @@ function fakeRpc(world: World, slot: Slot = SLOT) {
       return { send: async () => ({ context: { slot }, value }) }
     },
   }
-  const reader: AllowanceReader = { rpc, programAddress: PROGRAM_ADDRESS }
+  const reader: AllowanceReader = { rpc, programAddress: PROGRAM_ADDRESS, usdcMint: MINT_A }
   return { reader, calls }
 }
 
@@ -204,6 +204,7 @@ describe('AllowanceReader', () => {
     })
     const reader: AllowanceReader = client
     expect(reader.programAddress).toBe(PROGRAM_ADDRESS)
+    expect(reader.usdcMint).toBe(MINT_A)
     expect(typeof reader.rpc.getProgramAccounts).toBe('function')
     expect(typeof reader.rpc.getMultipleAccounts).toBe('function')
   })
@@ -504,5 +505,103 @@ describe('нечитаний акаунт не коротшає список м�
     expect(result.unreadable.map((entry) => entry.address)).toEqual(
       [FIXED_PDA, RECURRING_PDA, JUNK_PDA].sort(),
     )
+  })
+})
+
+describe('непідтримуваний актив — FR-020', () => {
+  const supportedOf = (result: { allowances: { pda: string; assetSupported: boolean }[] }) =>
+    Object.fromEntries(result.allowances.map((a) => [a.pda, a.assetSupported]))
+
+  it('дозвіл у розрахунковому активі позначено підтримуваним', async () => {
+    const { reader } = fakeRpc({ delegations: [fixedAccount()] })
+    const result = await read(reader)
+
+    expect(result.allowances[0]?.mint).toBe(MINT_A)
+    expect(result.allowances[0]?.assetSupported).toBe(true)
+  })
+
+  /**
+   * Ключове для `FR-020` разом із `FR-006`: чужий актив **не** зникає зі списку
+   * і не їде в `unreadable`. Він показується — інакше зник би і єдиний спосіб
+   * такий дозвіл скасувати.
+   */
+  it('дозвіл у чужому активі лишається в списку з позначкою', async () => {
+    const { reader } = fakeRpc({ delegations: [recurringAccount()] })
+    const result = await read(reader)
+
+    expect(result.unreadable).toEqual([])
+    expect(result.allowances).toHaveLength(1)
+    expect(result.allowances[0]?.mint).toBe(MINT_B)
+    expect(result.allowances[0]?.assetSupported).toBe(false)
+  })
+
+  it('позначка не коротшає список: змішаний гаманець віддає всі три дозволи', async () => {
+    const { reader } = fakeRpc({
+      delegations: [fixedAccount(), recurringAccount(), subscriptionAccount()],
+      atAddress: [planA()],
+    })
+    const result = await read(reader)
+
+    expect(result.allowances).toHaveLength(3)
+    expect(supportedOf(result)).toEqual({
+      [FIXED_PDA]: true,
+      [RECURRING_PDA]: false,
+      [SUB_PDA]: true,
+    })
+  })
+
+  /** Для підписки актив приносить план, тож і позначка рахується з міну плану. */
+  it('для підписки актив береться з плану, а не з акаунта підписки', async () => {
+    const { reader } = fakeRpc({
+      delegations: [subscriptionAccount({ delegatee: PLAN_B })],
+      atAddress: [planB()],
+      allPlans: [planB()],
+    })
+    const result = await read(reader, { fullPlanScan: false })
+    expect(result.allowances).toEqual([])
+
+    const other = fakeRpc({
+      delegations: [
+        account(
+          OTHER_SUB_PDA,
+          encodeSubscription({
+            ...SUBSCRIPTION,
+            header: header(AccountDiscriminator.SubscriptionDelegation, { delegatee: PLAN_B }),
+          }),
+        ),
+      ],
+      atAddress: [planB()],
+    })
+    const resolved = await read(other.reader)
+
+    expect(resolved.allowances[0]?.planPda).toBe(PLAN_B)
+    expect(resolved.allowances[0]?.mint).toBe(MINT_B)
+    expect(resolved.allowances[0]?.assetSupported).toBe(false)
+  })
+
+  /**
+   * Розрахунковий актив — конфігурація, не константа: на devnet це не той мін,
+   * що на mainnet. Той самий дозвіл при іншому налаштуванні міняє позначку.
+   */
+  it('позначку задає розрахунковий актив із конфігурації', async () => {
+    const { reader } = fakeRpc({ delegations: [recurringAccount()] })
+    const asDevnet: AllowanceReader = { ...reader, usdcMint: MINT_B }
+
+    expect((await read(reader)).allowances[0]?.assetSupported).toBe(false)
+    expect((await read(asDevnet)).allowances[0]?.assetSupported).toBe(true)
+  })
+
+  it('нечитаний акаунт позначки не отримує — його активу ніхто не знає', async () => {
+    const data = new Uint8Array(187)
+    data[0] = 9
+    const { reader } = fakeRpc({ delegations: [account(JUNK_PDA, data)] })
+    const result = await read(reader)
+
+    expect(result.allowances).toEqual([])
+    expect(result.unreadable[0]).toEqual({
+      address: JUNK_PDA,
+      reason: 'discriminator',
+      detail: expect.stringContaining('discriminator'),
+    })
   })
 })
