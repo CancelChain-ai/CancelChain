@@ -1,4 +1,4 @@
-import type { Allowance } from '@cancelchain/shared'
+import type { Allowance, AllowanceUnreadableReason } from '@cancelchain/shared'
 import type {
   AccountInfoBase,
   AccountInfoWithBase64EncodedData,
@@ -22,7 +22,6 @@ import {
   type PlanRef,
   toAllowance,
   UndecodableAccountError,
-  type UndecodableReason,
   UnsupportedVersionError,
 } from './decode.js'
 import { findSubscription } from './pda.js'
@@ -90,15 +89,16 @@ export type AllowanceReader = {
   usdcMint: Address
 }
 
-/** Чому акаунт не став карткою. Ніколи не мовчазне зникнення з переліку. */
-export type UnreadableReason =
-  | UndecodableReason
-  /** Версія акаунта не та, під яку зібрано цей код: поля не читаються. */
-  | 'version'
-  /** Підписка є, а її плану знайти не вдалося — без плану невідомий актив. */
-  | 'plan'
-  /** Акаунт прочитано, але значення поля не лягає в модель (нульовий період тощо). */
-  | 'fields'
+/**
+ * Чому акаунт не став карткою. Ніколи не мовчазне зникнення з переліку.
+ *
+ * Перелік береться зі `shared`, а не оголошується тут: рівно він їде назовні в
+ * `GET /v1/allowances`, і два списки розійшлися б мовчки — назвою причини, якої
+ * клієнт не знає. Що причини декодера (`UndecodableReason`) входять сюди всі,
+ * стежить `reasonFor`: вона повертає `error.reason` як `UnreadableReason`, тож
+ * нова причина в `decode.ts` зламає складання тут, а не в браузері.
+ */
+export type UnreadableReason = AllowanceUnreadableReason
 
 export type UnreadableAllowance = {
   address: Address

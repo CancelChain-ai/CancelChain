@@ -24,8 +24,20 @@ function health(overrides: Partial<HealthDeps> = {}): HealthDeps {
   }
 }
 
+const EMPTY_LIST = {
+  slot: SLOT,
+  syncedAt: '2026-09-02T12:00:00.000Z',
+  allowances: [],
+  unreadable: [],
+}
+
 function app(overrides: Partial<AppDeps> = {}) {
-  return createApp({ logger: createLogger('silent'), health: health(), ...overrides })
+  return createApp({
+    logger: createLogger('silent'),
+    health: health(),
+    allowances: { list: async () => EMPTY_LIST },
+    ...overrides,
+  })
 }
 
 describe('GET /health', () => {

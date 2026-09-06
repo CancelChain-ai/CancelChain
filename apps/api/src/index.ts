@@ -1,4 +1,9 @@
-import { chainConfigFromEnv, createChainClient } from '@cancelchain/chain'
+import {
+  chainConfigFromEnv,
+  createChainClient,
+  readAllowances,
+  toAddress,
+} from '@cancelchain/chain'
 import { indexerCursor } from '@cancelchain/db'
 import { serve } from '@hono/node-server'
 import { desc } from 'drizzle-orm'
@@ -42,6 +47,9 @@ function main(): void {
       cachedAt: () => latestCursorAt(database.db),
       startedAt,
     },
+    // До індексатора (`T038`) список читається з мережі на кожен запит; сховище
+    // в цьому шляху не бере участі взагалі.
+    allowances: { list: (owner) => readAllowances(chain, { owner: toAddress(owner) }) },
   })
 
   const server = serve({ fetch: app.fetch, port: config.port, hostname: '0.0.0.0' }, (info) => {

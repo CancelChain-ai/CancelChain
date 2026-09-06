@@ -2,12 +2,14 @@ import { Hono } from 'hono'
 import { errorHandler, notFoundHandler } from './errors.js'
 import { type Logger, requestLogger } from './logger.js'
 import { type RateLimitOptions, rateLimit } from './rateLimit.js'
+import { type AllowancesDeps, allowancesRoute } from './routes/allowances.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
 import type { AppEnv } from './types.js'
 
 export type AppDeps = {
   logger: Logger
   health: HealthDeps
+  allowances: AllowancesDeps
   rateLimit?: RateLimitOptions
 }
 
@@ -28,7 +30,7 @@ export function createApp(deps: AppDeps) {
   app.notFound(notFoundHandler)
   app.onError(errorHandler)
 
-  return app.route('/', healthRoute(deps.health))
+  return app.route('/', healthRoute(deps.health)).route('/', allowancesRoute(deps.allowances))
 }
 
 export type App = ReturnType<typeof createApp>

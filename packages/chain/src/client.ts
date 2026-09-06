@@ -6,7 +6,7 @@ import type {
   SolanaRpcApi,
   SolanaRpcSubscriptionsApi,
 } from '@solana/kit'
-import { createSolanaRpc, createSolanaRpcSubscriptions } from '@solana/kit'
+import { assertIsAddress, createSolanaRpc, createSolanaRpcSubscriptions } from '@solana/kit'
 import { SUBSCRIPTIONS_PROGRAM_ADDRESS } from '@solana/subscriptions'
 import { z } from 'zod'
 
@@ -16,6 +16,20 @@ import { z } from 'zod'
  * пакета, і константа з `@solana/subscriptions` розійтися не може за побудовою.
  */
 export const PROGRAM_ADDRESS = SUBSCRIPTIONS_PROGRAM_ADDRESS
+
+/**
+ * Рядок у брендований `Address` kit — із перевіркою, а не приведенням типу.
+ *
+ * Потрібен на межі, де адреса приходить рядком (параметр запиту, оточення):
+ * `as Address` там мовчки пропустив би будь-який рядок у деривацію PDA й у
+ * фільтр `memcmp`, а `assertIsAddress` перевіряє і довжину, і алфавіт. Живе
+ * тут, щоб застосункам не доводилося тягнути `@solana/kit` у залежності лише
+ * заради приведення типу.
+ */
+export function toAddress(value: string): Address {
+  assertIsAddress(value)
+  return value
+}
 
 export const CLUSTERS = ['devnet', 'testnet', 'mainnet-beta', 'localnet'] as const
 export type Cluster = (typeof CLUSTERS)[number]
@@ -113,7 +127,7 @@ export function createChainClient(
     rpc: createSolanaRpc(config.rpcUrl),
     rpcSubscriptions: createSolanaRpcSubscriptions(wsUrl),
     programAddress: PROGRAM_ADDRESS,
-    usdcMint: config.usdcMint as Address,
+    usdcMint: toAddress(config.usdcMint),
   }
 }
 

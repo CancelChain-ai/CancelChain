@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   listAllowancesQuerySchema,
+  listAllowancesResponseSchema,
   listEventsQuerySchema,
+  listedAllowanceSchema,
   MAX_EVENTS_PAGE,
   pushSubscribeBodySchema,
   signInMessageSchema,
@@ -79,5 +81,74 @@ describe('signInMessageSchema', () => {
     }
     expect(signInMessageSchema.parse(message)).toEqual(message)
     expect(signInMessageSchema.safeParse({ ...message, nonce: 'short' }).success).toBe(false)
+  })
+})
+
+const LISTED_ALLOWANCE = {
+  pda: PDA,
+  owner: OWNER,
+  delegate: PDA,
+  mint: OWNER,
+  kind: 'fixed',
+  capAmount: '25000000',
+  periodSeconds: null,
+  spentInPeriod: '0',
+  periodStartedAt: null,
+  expiresAt: null,
+  pausedAt: null,
+  endsAt: null,
+  status: 'active',
+  planPda: null,
+  lastSlot: 412_345_678,
+  syncedAt: '2026-09-02T00:00:00.000Z',
+  assetSupported: false,
+}
+
+describe('listedAllowanceSchema', () => {
+  /**
+   * Without the extension the mark would be stripped in silence: an object
+   * schema drops unknown keys, the response would still validate, and an
+   * allowance in a foreign asset would reach the screen looking ordinary.
+   */
+  it('keeps the asset mark instead of stripping it', () => {
+    expect(listedAllowanceSchema.parse(LISTED_ALLOWANCE).assetSupported).toBe(false)
+  })
+
+  it('demands the mark — an allowance without it is not a list item', () => {
+    const { assetSupported: _omitted, ...withoutMark } = LISTED_ALLOWANCE
+    expect(listedAllowanceSchema.safeParse(withoutMark).success).toBe(false)
+  })
+
+  /** The extension must not lose the invariants of the allowance itself. */
+  it('still enforces that a periodic allowance has a period', () => {
+    const recurring = { ...LISTED_ALLOWANCE, kind: 'recurring' }
+    expect(listedAllowanceSchema.safeParse(recurring).success).toBe(false)
+  })
+})
+
+describe('listAllowancesResponseSchema', () => {
+  it('carries the accounts that could not be read, with a category and no free text', () => {
+    const parsed = listAllowancesResponseSchema.parse({
+      items: [],
+      syncedAt: '2026-09-02T00:00:00.000Z',
+      stale: false,
+      unreadable: [{ address: PDA, reason: 'version', detail: 'account version 2' }],
+    })
+    expect(parsed.unreadable).toEqual([{ address: PDA, reason: 'version' }])
+  })
+
+  it('rejects a reason outside the finite list', () => {
+    const body = {
+      items: [],
+      syncedAt: '2026-09-02T00:00:00.000Z',
+      stale: false,
+      unreadable: [{ address: PDA, reason: 'other' }],
+    }
+    expect(listAllowancesResponseSchema.safeParse(body).success).toBe(false)
+  })
+
+  it('demands the unreadable list — "shown everything" has to be said, not assumed', () => {
+    const body = { items: [], syncedAt: '2026-09-02T00:00:00.000Z', stale: false }
+    expect(listAllowancesResponseSchema.safeParse(body).success).toBe(false)
   })
 })
