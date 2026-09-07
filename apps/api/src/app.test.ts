@@ -24,18 +24,19 @@ function health(overrides: Partial<HealthDeps> = {}): HealthDeps {
   }
 }
 
-const EMPTY_LIST = {
-  slot: SLOT,
-  syncedAt: '2026-09-02T12:00:00.000Z',
-  allowances: [],
-  unreadable: [],
-}
+const SYNCED_AT = '2026-09-02T12:00:00.000Z'
+const EMPTY_LIST = { slot: SLOT, syncedAt: SYNCED_AT, allowances: [], unreadable: [] }
 
 function app(overrides: Partial<AppDeps> = {}) {
   return createApp({
     logger: createLogger('silent'),
     health: health(),
-    allowances: { list: async () => EMPTY_LIST },
+    allowances: {
+      list: async () => EMPTY_LIST,
+      get: async () => ({ slot: SLOT, syncedAt: SYNCED_AT, allowance: null, unreadable: null }),
+      cached: async () => null,
+      settlementMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
+    },
     ...overrides,
   })
 }

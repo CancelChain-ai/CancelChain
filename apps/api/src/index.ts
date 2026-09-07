@@ -1,12 +1,15 @@
 import {
   chainConfigFromEnv,
   createChainClient,
+  readAllowance,
   readAllowances,
   toAddress,
 } from '@cancelchain/chain'
-import { indexerCursor } from '@cancelchain/db'
+import { allowances, indexerCursor } from '@cancelchain/db'
+import type { Allowance } from '@cancelchain/shared'
+import { allowanceSchema } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
-import { desc } from 'drizzle-orm'
+import { desc, eq } from 'drizzle-orm'
 import { createApp } from './app.js'
 import { createDb, type Db } from './db.js'
 import { apiConfigFromEnv } from './env.js'
@@ -31,6 +34,20 @@ async function latestCursorAt(db: Db): Promise<string | null> {
   return rows[0]?.updatedAt ?? null
 }
 
+/**
+ * Збережений дозвіл із кеша. До `T038` таблиця порожня, і запит завжди дає
+ * `null` — але не заглушка: рядок з'явиться в ту саму мить, коли індексатор
+ * почне писати, і звірка (`FR-024`) запрацює без правок у маршруті.
+ *
+ * Схема зі `shared` проганяється й тут: рядок у базі писав інший процес, і
+ * довіряти його формі на слово означало б пустити невалідний статус на картку.
+ */
+async function cachedAllowance(db: Db, pda: string): Promise<Allowance | null> {
+  const rows = await db.select().from(allowances).where(eq(allowances.pda, pda)).limit(1)
+  const row = rows[0]
+  return row === undefined ? null : allowanceSchema.parse(row)
+}
+
 function main(): void {
   const startedAt = Date.now()
   const config = apiConfigFromEnv(process.env)
@@ -47,9 +64,14 @@ function main(): void {
       cachedAt: () => latestCursorAt(database.db),
       startedAt,
     },
-    // До індексатора (`T038`) список читається з мережі на кожен запит; сховище
-    // в цьому шляху не бере участі взагалі.
-    allowances: { list: (owner) => readAllowances(chain, { owner: toAddress(owner) }) },
+    allowances: {
+      // До індексатора (`T038`) список читається з мережі на кожен запит; сховище
+      // в цьому шляху не бере участі взагалі.
+      list: (owner) => readAllowances(chain, { owner: toAddress(owner) }),
+      get: (pda) => readAllowance(chain, { pda: toAddress(pda) }),
+      cached: (pda) => cachedAllowance(database.db, pda),
+      settlementMint: chain.usdcMint,
+    },
   })
 
   const server = serve({ fetch: app.fetch, port: config.port, hostname: '0.0.0.0' }, (info) => {

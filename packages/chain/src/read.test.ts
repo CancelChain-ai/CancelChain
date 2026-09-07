@@ -20,7 +20,12 @@ import {
 import { describe, expect, it } from 'vitest'
 import { createChainClient, PROGRAM_ADDRESS } from './client.js'
 import { findSubscription } from './pda.js'
-import { type AllowanceReader, type ProgramAccountsRpc, readAllowances } from './read.js'
+import {
+  type AllowanceReader,
+  type ProgramAccountsRpc,
+  readAllowance,
+  readAllowances,
+} from './read.js'
 
 const OWNER = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU' as Address
 const MERCHANT = 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA' as Address
@@ -603,5 +608,90 @@ describe('непідтримуваний актив — FR-020', () => {
       reason: 'discriminator',
       detail: expect.stringContaining('discriminator'),
     })
+  })
+})
+
+describe('readAllowance — один дозвіл за адресою', () => {
+  const one = (reader: AllowanceReader, pda: Address, options: { fullPlanScan?: boolean } = {}) =>
+    readAllowance(reader, { pda, now: NOW, ...options })
+
+  /**
+   * Картка не має права коштувати `getProgramAccounts` по всій програмі: ця
+   * ручка викликається щоразу перед підписом (`FR-024`), а не раз на екран.
+   */
+  it('читає рівно один акаунт, без проходу по програмі', async () => {
+    const { reader, calls } = fakeRpc({ atAddress: [fixedAccount()] })
+    const result = await one(reader, FIXED_PDA)
+
+    expect(calls).toEqual([{ kind: 'multiple', addresses: [FIXED_PDA] }])
+    expect(result.allowance?.pda).toBe(FIXED_PDA)
+    expect(result.unreadable).toBeNull()
+    expect(result.slot).toBe(412_345_678)
+    expect(result.syncedAt).toBe(NOW.toISOString())
+  })
+
+  /**
+   * Акаунта немає — це відповідь, а не помилка: скасований дозвіл є саме
+   * закритим акаунтом, і `null` тут означає «скасовано».
+   */
+  it('акаунта в мережі немає — allowance null без відмови', async () => {
+    const { reader } = fakeRpc({})
+    const result = await one(reader, FIXED_PDA)
+
+    expect(result.allowance).toBeNull()
+    expect(result.unreadable).toBeNull()
+    expect(result.slot).toBe(412_345_678)
+  })
+
+  it('підписка тягне свій план тим самим шляхом, що й список', async () => {
+    const { reader, calls } = fakeRpc({ atAddress: [subscriptionAccount(), planA()] })
+    const result = await one(reader, SUB_PDA)
+
+    expect(calls).toEqual([
+      { kind: 'multiple', addresses: [SUB_PDA] },
+      { kind: 'multiple', addresses: [PLAN_A] },
+    ])
+    expect(result.allowance?.planPda).toBe(PLAN_A)
+    expect(result.allowance?.mint).toBe(MINT_A)
+    expect(result.allowance?.assetSupported).toBe(true)
+  })
+
+  it('план не знайшовся — названа відмова, а не мовчазний null', async () => {
+    const { reader } = fakeRpc({ atAddress: [subscriptionAccount()] })
+    const result = await one(reader, SUB_PDA, { fullPlanScan: false })
+
+    expect(result.allowance).toBeNull()
+    expect(result.unreadable).toMatchObject({ address: SUB_PDA, reason: 'plan' })
+  })
+
+  /**
+   * Знайдено живим прогоном: адреса самої програми (акаунт існує, але чужий)
+   * давала «нечитаний дозвіл» і `500` замість «такого дозволу немає».
+   */
+  it('акаунт чужої програми — це «немає дозволу», а не «не змогли прочитати»', async () => {
+    const foreign = account(FIXED_PDA, encodeFixed(FIXED), NOT_THE_PROGRAM)
+    const { reader } = fakeRpc({ atAddress: [foreign] })
+    const result = await one(reader, FIXED_PDA)
+
+    expect(result.allowance).toBeNull()
+    expect(result.unreadable).toBeNull()
+  })
+
+  it('акаунт не декодується — причина названа', async () => {
+    const junk = new Uint8Array(187)
+    junk[0] = 9
+    const { reader } = fakeRpc({ atAddress: [account(JUNK_PDA, junk)] })
+    const result = await one(reader, JUNK_PDA)
+
+    expect(result.allowance).toBeNull()
+    expect(result.unreadable).toMatchObject({ address: JUNK_PDA, reason: 'discriminator' })
+  })
+
+  it('позначка активу рахується так само, як у списку', async () => {
+    const { reader } = fakeRpc({ atAddress: [recurringAccount()] })
+    const result = await one(reader, RECURRING_PDA)
+
+    expect(result.allowance?.mint).toBe(MINT_B)
+    expect(result.allowance?.assetSupported).toBe(false)
   })
 })

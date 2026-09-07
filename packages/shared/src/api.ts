@@ -85,7 +85,15 @@ export const getAllowanceParamsSchema = z.object({
   pda: addressSchema,
 })
 
-export const getAllowanceResponseSchema = allowanceDetailSchema
+/**
+ * Картка несе ту саму позначку активу, що й список (`FR-020`) — і саме тут вона
+ * має вагу: дії живуть у картці, а над дозволом у чужому активі не пропонується
+ * жодної, крім скасування. Без цього поля клієнтові довелося б знати
+ * розрахунковий мін самому, тобто дублювати конфігурацію сервера.
+ */
+export const getAllowanceResponseSchema = allowanceDetailSchema.extend({
+  assetSupported: z.boolean(),
+})
 
 export const MAX_EVENTS_PAGE = 100
 

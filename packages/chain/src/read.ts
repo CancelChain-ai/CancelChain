@@ -194,26 +194,47 @@ function toPlanAccount(raw: RawProgramAccount, programAddress: Address): PlanAcc
   return { address: raw.pubkey, plan: getPlanDecoder().decode(encoded.data) }
 }
 
-/** Плани за відомими адресами — один запит на кожні 100 адрес. */
-async function readPlansByAddress(
+/**
+ * Акаунти за відомими адресами — один запит на кожні 100 адрес.
+ *
+ * Слот віддається зі **останньої** пачки: усі пачки читаються підряд, і брати
+ * найстарішу мітку означало б назвати відповідь свіжішою, ніж вона є.
+ */
+async function readAccounts(
   reader: AllowanceReader,
   addresses: readonly Address[],
   commitment: Commitment | undefined,
-): Promise<PlanAccount[]> {
-  const plans: PlanAccount[] = []
+): Promise<{ slot: Slot; accounts: RawProgramAccount[] }> {
+  let slot = 0n as Slot
+  const accounts: RawProgramAccount[] = []
   for (const batch of chunk(addresses, MAX_ACCOUNTS_PER_REQUEST)) {
-    const { value } = await reader.rpc
+    const response = await reader.rpc
       .getMultipleAccounts(batch, {
         encoding: 'base64',
         ...(commitment === undefined ? {} : { commitment }),
       })
       .send()
-    value.forEach((account, index) => {
+    slot = response.context.slot
+    response.value.forEach((account, index) => {
       const pubkey = batch[index]
       if (account === null || pubkey === undefined) return
-      const plan = toPlanAccount({ pubkey, account }, reader.programAddress)
-      if (plan !== null) plans.push(plan)
+      accounts.push({ pubkey, account })
     })
+  }
+  return { slot, accounts }
+}
+
+/** Плани за відомими адресами. */
+async function readPlansByAddress(
+  reader: AllowanceReader,
+  addresses: readonly Address[],
+  commitment: Commitment | undefined,
+): Promise<PlanAccount[]> {
+  const { accounts } = await readAccounts(reader, addresses, commitment)
+  const plans: PlanAccount[] = []
+  for (const raw of accounts) {
+    const plan = toPlanAccount(raw, reader.programAddress)
+    if (plan !== null) plans.push(plan)
   }
   return plans
 }
@@ -370,6 +391,27 @@ export async function readAllowances(
     commitment: options.commitment,
   })
 
+  const { allowances, unreadable } = convert(reader, decoded, planRefs, {
+    slot,
+    syncedAt,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  })
+
+  return {
+    slot,
+    syncedAt,
+    allowances: allowances.sort((a, b) => byAddress(a.pda, b.pda)),
+    unreadable: unreadable.sort((a, b) => byAddress(a.address, b.address)),
+  }
+}
+
+/** Прочитані акаунти → картки й названі відмови. Спільне для списку й картки. */
+function convert(
+  reader: AllowanceReader,
+  decoded: readonly DecodedDelegation[],
+  planRefs: ReadonlyMap<Address, PlanRef>,
+  context: { slot: number; syncedAt: string; now?: Date },
+): { allowances: ReadAllowance[]; unreadable: UnreadableAllowance[] } {
   const allowances: ReadAllowance[] = []
   const unreadable: UnreadableAllowance[] = []
   for (const entry of decoded) {
@@ -381,21 +423,93 @@ export async function readAllowances(
     const plan = entry.kind === 'subscription' ? planRefs.get(entry.address) : undefined
     try {
       const allowance = toAllowance(entry, {
-        slot,
-        syncedAt,
+        slot: context.slot,
+        syncedAt: context.syncedAt,
         ...(plan === undefined ? {} : { plan }),
-        ...(options.now === undefined ? {} : { now: options.now }),
+        ...(context.now === undefined ? {} : { now: context.now }),
       })
       allowances.push({ ...allowance, assetSupported: allowance.mint === reader.usdcMint })
     } catch (error) {
       unreadable.push(unreadableFrom(entry.address, reasonFor(error), error))
     }
   }
+  return { allowances, unreadable }
+}
 
+export type ReadAllowanceOptions = {
+  pda: Address
+  now?: Date
+  commitment?: Commitment
+  fullPlanScan?: boolean
+}
+
+export type AllowanceReadOne = {
+  slot: number
+  syncedAt: string
+  /**
+   * `null` — акаунта в мережі **немає**. Це не помилка читання, а відповідь:
+   * скасований дозвіл — це закритий акаунт (`decode.ts`), тож саме `null` тут
+   * і означає «скасовано» для `FR-022`.
+   */
+  allowance: ReadAllowance | null
+  /** Акаунт є, але карткою не став. Взаємно виключний із `allowance`. */
+  unreadable: UnreadableAllowance | null
+}
+
+/**
+ * Один дозвіл за адресою — звірка з мережею для картки й **перед дією**
+ * (`FR-024`).
+ *
+ * Свій шлях, а не `readAllowances` із фільтром: список коштує
+ * `getProgramAccounts` по всій програмі, а тут потрібен рівно один акаунт, і
+ * ця ручка викликається щоразу перед підписом (`T026`). Пайплайн той самий —
+ * декодування, план за деривацією, приведення до `Allowance`, — тож картка й
+ * список не можуть розійтися в тлумаченні тих самих байтів.
+ */
+export async function readAllowance(
+  reader: AllowanceReader,
+  options: ReadAllowanceOptions,
+): Promise<AllowanceReadOne> {
+  const { slot: rawSlot, accounts } = await readAccounts(reader, [options.pda], options.commitment)
+  const slot = slotToNumber(rawSlot)
+  const syncedAt = (options.now ?? new Date()).toISOString()
+  const raw = accounts[0]
+  /*
+   * Немає акаунта — або є, але належить іншій програмі. Обидва випадки означають
+   * одне: за цією адресою дозволу немає. Чужий акаунт **не** є «нечитаним
+   * дозволом»: сказати про адресу токен-акаунта чи самої програми «не змогли
+   * прочитати ваш дозвіл» означало б вигадати дозвіл, якого не існує. У списку
+   * такої перевірки не треба — там усе приходить із `getProgramAccounts`.
+   */
+  if (raw === undefined || raw.account.owner !== reader.programAddress) {
+    return { slot, syncedAt, allowance: null, unreadable: null }
+  }
+
+  const decoded = decodeDelegation(raw.pubkey, toEncodedAccount(raw, reader.programAddress).data)
+  const subscriptions: SubscriptionAccount[] =
+    decoded.kind === 'subscription'
+      ? [
+          {
+            address: decoded.address,
+            subscriber: decoded.data.header.delegator,
+            delegatee: decoded.data.header.delegatee,
+          },
+        ]
+      : []
+  const planRefs = await resolvePlanRefs(reader, subscriptions, {
+    fullPlanScan: options.fullPlanScan ?? true,
+    commitment: options.commitment,
+  })
+
+  const { allowances, unreadable } = convert(reader, [decoded], planRefs, {
+    slot,
+    syncedAt,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  })
   return {
     slot,
     syncedAt,
-    allowances: allowances.sort((a, b) => byAddress(a.pda, b.pda)),
-    unreadable: unreadable.sort((a, b) => byAddress(a.address, b.address)),
+    allowance: allowances[0] ?? null,
+    unreadable: unreadable[0] ?? null,
   }
 }
