@@ -84,18 +84,24 @@ importers:
       '@cancelchain/chain':
         specifier: workspace:*
         version: link:../../packages/chain
+      '@cancelchain/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@solana/kit':
         specifier: 'catalog:'
         version: 7.1.1(typescript@5.9.3)
       '@solana/react':
         specifier: 'catalog:'
-        version: 7.1.1(@solana/kit@7.1.1(typescript@5.9.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
+        version: 7.1.1(@solana/kit@7.1.1(typescript@5.9.3))(@tanstack/react-query@5.102.8(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)
       '@solana/wallet-standard-chains':
         specifier: 1.1.2
         version: 1.1.2
       '@solana/wallet-standard-features':
         specifier: 1.4.0
         version: 1.4.0
+      '@tanstack/react-query':
+        specifier: 5.102.8
+        version: 5.102.8(react@18.3.1)
       '@wallet-standard/features':
         specifier: 1.1.1
         version: 1.1.1
@@ -111,6 +117,9 @@ importers:
       react-dom:
         specifier: 18.3.1
         version: 18.3.1(react@18.3.1)
+      zod:
+        specifier: 4.5.4
+        version: 4.5.4
     devDependencies:
       '@testing-library/dom':
         specifier: 10.4.1
@@ -1649,6 +1658,14 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tanstack/query-core@5.102.8':
+    resolution: {integrity: sha512-ZNjkJ33CqvPNec/6lZBnHqLc3EVGPZ9ySLhYahU9TcuRFdmwXewuj0c4hwSWcGHqEUwcSrKeZ+oGcvPBqXcQcg==}
+
+  '@tanstack/react-query@5.102.8':
+    resolution: {integrity: sha512-TYBea4OuXWD7MhaSHq069TWbFe7rcwWN6kzT7JF0OKi1K6c1gTv2IzD6A6ExJsCMozdkqBWeuIUZmu4KQg0O5A==}
+    peerDependencies:
+      react: ^18 || ^19
 
   '@testing-library/dom@10.4.1':
     resolution: {integrity: sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg==}
@@ -3677,7 +3694,7 @@ snapshots:
     optionalDependencies:
       typescript: 5.9.3
 
-  '@solana/react@7.1.1(@solana/kit@7.1.1(typescript@5.9.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)':
+  '@solana/react@7.1.1(@solana/kit@7.1.1(typescript@5.9.3))(@tanstack/react-query@5.102.8(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.9.3)':
     dependencies:
       '@solana/kit': 7.1.1(typescript@5.9.3)
       '@solana/promises': 7.1.1(typescript@5.9.3)
@@ -3692,6 +3709,7 @@ snapshots:
       '@wallet-standard/ui': 1.0.3
       '@wallet-standard/ui-registry': 1.1.1
     optionalDependencies:
+      '@tanstack/react-query': 5.102.8(react@18.3.1)
       react: 18.3.1
     transitivePeerDependencies:
       - fastestsmallesttextencoderdecoder
@@ -3970,6 +3988,13 @@ snapshots:
       '@wallet-standard/features': 1.1.1
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tanstack/query-core@5.102.8': {}
+
+  '@tanstack/react-query@5.102.8(react@18.3.1)':
+    dependencies:
+      '@tanstack/query-core': 5.102.8
+      react: 18.3.1
 
   '@testing-library/dom@10.4.1':
     dependencies:
