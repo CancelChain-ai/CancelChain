@@ -245,8 +245,15 @@ export function useWalletConnect(
 
 /**
  * Від'єднання. Вибір знімається **перед** запитом до гаманця: якщо розширення
- * не має `standard:disconnect` або відмовить, застосунок усе одно мусить
- * перестати показувати чужі дозволи — це видимість чужих грошей, а не налаштування.
+ * відмовить, застосунок усе одно мусить перестати показувати чужі дозволи —
+ * це видимість чужих грошей, а не налаштування.
+ *
+ * ⚠️ **Викликати лише там, де `walletCanDisconnect(wallet)` уже істинне.**
+ * `useDisconnect` зі `@wallet-standard/react` на гаманці без
+ * `standard:disconnect` **кидає при рендері**, а не повертає помилку, тож умова
+ * всередині `run` від падіння не рятує: до неї справа не доходить. Гаманець без
+ * цієї здатності обходиться `forget()` — вибір знімається в нас, гаманця ніхто
+ * ні про що не питає.
  */
 export function useWalletDisconnect(
   wallet: UiWallet,
@@ -255,8 +262,7 @@ export function useWalletDisconnect(
   const [, setAccount] = useSelectedWalletAccount()
   const run = useCallback(async () => {
     setAccount(undefined)
-    if (!walletCanDisconnect(wallet)) return
     await disconnect()
-  }, [disconnect, setAccount, wallet])
+  }, [disconnect, setAccount])
   return [isDisconnecting, run]
 }

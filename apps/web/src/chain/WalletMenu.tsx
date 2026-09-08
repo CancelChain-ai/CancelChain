@@ -7,6 +7,7 @@ import {
   useWalletConnect,
   useWalletConnection,
   useWalletDisconnect,
+  walletCanDisconnect,
   walletSigningSupport,
 } from './wallet.js'
 
@@ -50,6 +51,11 @@ function ConnectButton({ wallet }: { wallet: UiWallet }) {
   )
 }
 
+/**
+ * Монтується **лише** для гаманця, який уміє `standard:disconnect`: інакше
+ * `useWalletDisconnect` кидає при рендері й забирає з собою весь застосунок
+ * (знайдено живим прогоном на гаманці без цієї здатності).
+ */
 function DisconnectButton({ wallet, label }: { wallet: UiWallet; label: string }) {
   const [isDisconnecting, disconnect] = useWalletDisconnect(wallet)
   return (
@@ -60,6 +66,20 @@ function DisconnectButton({ wallet, label }: { wallet: UiWallet; label: string }
       onClick={() => disconnect()}
     >
       {isDisconnecting ? 'Disconnecting…' : label}
+    </button>
+  )
+}
+
+/**
+ * Гаманець не вміє від'єднуватися — вибір знімається в нас. Кнопка тут
+ * потрібна саме тому: без неї єдиним способом перестати показувати чужі
+ * дозволи лишалося б закрити вкладку.
+ */
+function ForgetButton() {
+  const { forget } = useWalletConnection()
+  return (
+    <button type="button" className={BUTTON} onClick={() => forget()}>
+      Forget this wallet
     </button>
   )
 }
@@ -83,7 +103,11 @@ export function WalletMenu() {
             {signing === 'none' && ' · wallet cannot sign — cancelling is unavailable'}
           </span>
         </span>
-        {wallet !== undefined && <DisconnectButton wallet={wallet} label="Disconnect" />}
+        {wallet !== undefined && walletCanDisconnect(wallet) ? (
+          <DisconnectButton wallet={wallet} label="Disconnect" />
+        ) : (
+          <ForgetButton />
+        )}
       </span>
     )
   }
