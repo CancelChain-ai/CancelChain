@@ -1,5 +1,11 @@
 import { type KeyboardEvent, type MouseEvent, useState } from 'react'
-import { type AllowanceView, everyPeriod, formatMoney, shortDay } from '../lib/view'
+import {
+  type AllowanceView,
+  capSentence,
+  exhaustedSentence,
+  formatMoney,
+  shortDay,
+} from '../lib/view'
 import ConsentStrip from './ConsentStrip'
 
 /**
@@ -40,27 +46,6 @@ const Tag = ({ children, tone = 'quiet' }: { children: string; tone?: TagTone })
     {children}
   </span>
 )
-
-/** «Up to 24.00 USDC every 30 days» — або без періоду, якщо його немає. */
-export function capSentence(view: AllowanceView): string {
-  const cap = formatMoney(view.cap)
-  if (view.periodSeconds === null) return `Up to ${cap}, one-off`
-  return `Up to ${cap} ${everyPeriod(view.periodSeconds)}`
-}
-
-/**
- * Чому вичерпаний дозвіл більше не може списати.
- *
- * Для разового дозволу `cap` — це **залишок**, а не початкова стеля (структура
- * акаунта тримає саме залишок), тож нуль у ньому відрізняє «усе взято» від
- * «сплив строк». Для решти вичерпаність буває лише через строк.
- */
-export function exhaustedSentence(view: AllowanceView): string {
-  if (view.kind === 'fixed' && view.cap.amount === 0n) {
-    return 'Nothing is left on this one-off permission. It cannot charge again.'
-  }
-  return 'Past its expiry. It cannot charge again.'
-}
 
 const AllowanceCard = ({ view, onOpen, onCancel }: AllowanceCardProps) => {
   const [confirming, setConfirming] = useState(false)

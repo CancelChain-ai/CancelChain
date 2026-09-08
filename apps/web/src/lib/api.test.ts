@@ -166,3 +166,64 @@ describe('describeFailure', () => {
     ).toContain('owner is not an address')
   })
 })
+
+const CARD = {
+  ...ITEM,
+  chainState: {
+    status: 'active',
+    capAmount: '24000000',
+    spentInPeriod: '0',
+    periodStartedAt: '2026-08-07T00:00:00.000Z',
+    pausedAt: null,
+    endsAt: null,
+    slot: 400_000_000,
+  },
+  diverged: false,
+}
+
+describe('one allowance by address', () => {
+  it('asks for the address itself, without a wallet', async () => {
+    // Дозволи публічні в мережі: гаманця тут не питають, бо `pda` вже й є тим,
+    // що ідентифікує запис.
+    const { fetch, calls } = respondWith(200, CARD)
+    const card = await createApiClient('http://localhost:8879', fetch).getAllowance(PDA)
+
+    expect(calls[0]?.url).toBe(`http://localhost:8879/v1/allowances/${PDA}`)
+    expect(card.pda).toBe(PDA)
+    expect(card.chainState?.slot).toBe(400_000_000)
+    expect(card.diverged).toBe(false)
+  })
+
+  it('carries the state the network is missing as a state, not as a hole', async () => {
+    const { fetch } = respondWith(200, {
+      ...CARD,
+      chainState: null,
+      status: 'revoked',
+      diverged: true,
+    })
+    const card = await createApiClient('', fetch).getAllowance(PDA)
+    expect(card.chainState).toBeNull()
+    expect(card.status).toBe('revoked')
+  })
+
+  it('leaves NOT_FOUND a named failure for the source to read', async () => {
+    // Клієнт лишається тонкою межею з HTTP: «за цією адресою нічого немає» стає
+    // відповіддю вище, у джерелі, а не тут.
+    const { fetch } = respondWith(404, {
+      error: { code: 'NOT_FOUND', message: 'no allowance at this address' },
+    })
+    const failure = await createApiClient('', fetch)
+      .getAllowance(PDA)
+      .catch((error: unknown) => error)
+
+    expect(failure).toBeInstanceOf(ApiRequestError)
+    expect((failure as ApiRequestError).code).toBe('NOT_FOUND')
+  })
+
+  it('fails loudly when the card does not match the contract', async () => {
+    const { fetch } = respondWith(200, { ...CARD, diverged: 'no' })
+    await expect(createApiClient('', fetch).getAllowance(PDA)).rejects.toBeInstanceOf(
+      ApiContractError,
+    )
+  })
+})

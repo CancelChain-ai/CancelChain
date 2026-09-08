@@ -1,5 +1,9 @@
 import type { Address, ErrorCode } from '@cancelchain/shared'
-import { apiErrorSchema, listAllowancesResponseSchema } from '@cancelchain/shared'
+import {
+  apiErrorSchema,
+  getAllowanceResponseSchema,
+  listAllowancesResponseSchema,
+} from '@cancelchain/shared'
 import type { z } from 'zod'
 
 /**
@@ -14,6 +18,7 @@ import type { z } from 'zod'
  */
 
 export type ListAllowancesResponse = z.infer<typeof listAllowancesResponseSchema>
+export type GetAllowanceResponse = z.infer<typeof getAllowanceResponseSchema>
 
 /** Сервер відповів помилкою у форматі `shared`: код і повідомлення відомі. */
 export class ApiRequestError extends Error {
@@ -53,6 +58,15 @@ export class ApiContractError extends Error {
 
 export interface ApiClient {
   listAllowances(owner: Address, signal?: AbortSignal): Promise<ListAllowancesResponse>
+  /**
+   * Один дозвіл за адресою. Гаманця тут не питають і не передають: дозволи
+   * публічні в мережі, а `pda` вже й є тим, що ідентифікує запис.
+   *
+   * `NOT_FOUND` лишається `ApiRequestError` і **не** перетворюється на `null`
+   * тут: «за цією адресою нічого немає» — це відповідь, яку розрізняє джерело
+   * (`source.ts`), а клієнт лишається однією тонкою межею з HTTP.
+   */
+  getAllowance(pda: string, signal?: AbortSignal): Promise<GetAllowanceResponse>
 }
 
 /** Мінімум від `fetch`, потрібний клієнтові. Вужче — щоб тест не підробляв усе. */
@@ -107,6 +121,8 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
         listAllowancesResponseSchema,
         signal,
       ),
+    getAllowance: (pda, signal) =>
+      get(`/v1/allowances/${encodeURIComponent(pda)}`, getAllowanceResponseSchema, signal),
   }
 }
 

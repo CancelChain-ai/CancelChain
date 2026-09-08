@@ -4,6 +4,7 @@ import { useWalletEnvironment } from './chain/WalletProvider'
 import { shortenAddress, useWalletOwner } from './chain/wallet'
 import { type Permission, SUBSCRIBE_GRANT, WALLET } from './lib/mockData'
 import { mockData, source } from './lib/source'
+import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
 import Merchant from './pages/Merchant'
 import Subscribe from './pages/Subscribe'
@@ -21,12 +22,12 @@ const TABS: { id: View; label: string }[] = [
 /**
  * Екрани, які досі стоять на моці M0.
  *
- * Коли список уже читає devnet, ці три не читають нічого, і сказати про це
+ * Коли список уже читає devnet, ці два не читають нічого, і сказати про це
  * треба на самому екрані: підпис у шапці стосується застосунку в цілому, а
  * людина дивиться на конкретну сторінку. Перелік скорочується з кожною
- * задачею — `T024` знімає `detail`, `T036` — `subscribe`, `T052` — `merchant`.
+ * задачею — `T024` зняв `detail`, `T036` зніме `subscribe`, `T052` — `merchant`.
  */
-const MOCK_ONLY_VIEWS: View[] = ['detail', 'subscribe', 'merchant']
+const MOCK_ONLY_VIEWS: View[] = ['subscribe', 'merchant']
 
 const App = () => {
   const { cluster } = useWalletEnvironment()
@@ -43,6 +44,7 @@ const App = () => {
 
   const owner = useWalletOwner()
   const allowances = useAllowances(owner, mockRevision)
+  const allowance = useAllowance(selectedId, mockRevision)
 
   const update = (id: string, change: (permission: Permission) => Permission) => {
     mockData.update(id, change)
@@ -78,19 +80,35 @@ const App = () => {
   }
 
   /**
-   * Екран картки живе на моці до `T024`, тож відкривати його можна лише з
-   * мок-списку: за PDA справжнього дозволу тут нема чого показати, і підсунути
-   * туди вигадану картку означало б збрехати про справжні гроші.
+   * Картка читає той самий `source`, що й список (`T024`), тож відкривається
+   * вона з будь-якого джерела: для мока — з пам'яті модуля, для `api` — запитом
+   * `GET /v1/allowances/:pda` за адресою самого дозволу.
    */
-  const openDetail =
-    source.kind === 'mock'
-      ? (id: string) => {
-          setSelectedId(id)
-          setView('detail')
-        }
-      : undefined
+  const openDetail = (id: string) => {
+    setSelectedId(id)
+    setView('detail')
+  }
 
-  const selected = selectedId === null ? undefined : mockData.find(selectedId)
+  /**
+   * Дії живуть тільки в демо: вони змінюють мок у пам'яті й нічого не
+   * підписують. На справжніх даних жодна з них не передається — скасування
+   * приходить транзакцією у `T025`/`T026`, а кнопка, яка нічого не робить,
+   * гірша за її відсутність.
+   */
+  const demoActions =
+    source.kind === 'mock'
+      ? {
+          onPause: pause,
+          onDontRenew: dontRenew,
+          onResume: resume,
+          onKeep: keep,
+          onCancelNow: (id: string) => {
+            cancel(id)
+            setView('subscriptions')
+          },
+        }
+      : {}
+
   const walletLabel = source.requiresWallet
     ? owner === null
       ? null
@@ -152,25 +170,18 @@ const App = () => {
         )}
 
         {view === 'detail' &&
-          (selected ? (
-            <Subscription
-              permission={selected}
-              onBack={() => setView('subscriptions')}
-              onPause={pause}
-              onDontRenew={dontRenew}
-              onResume={resume}
-              onKeep={keep}
-              onCancelNow={(id) => {
-                cancel(id)
-                setView('subscriptions')
-              }}
-            />
-          ) : (
+          (selectedId === null ? (
             <Subscriptions
               state={allowances}
               walletLabel={walletLabel}
               onNetwork={source.onNetwork}
               onOpen={openDetail}
+            />
+          ) : (
+            <Subscription
+              state={allowance}
+              onBack={() => setView('subscriptions')}
+              {...demoActions}
             />
           ))}
 

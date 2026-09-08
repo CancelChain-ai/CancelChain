@@ -1,6 +1,11 @@
 import type { Address } from '@cancelchain/shared'
 import { afterEach, describe, expect, it } from 'vitest'
-import type { ApiClient, ListAllowancesResponse } from './api'
+import {
+  type ApiClient,
+  ApiRequestError,
+  type GetAllowanceResponse,
+  type ListAllowancesResponse,
+} from './api'
 import { PERMISSIONS } from './mockData'
 import {
   createApiSource,
@@ -43,7 +48,10 @@ function item(over: Partial<ListAllowancesResponse['items'][number]> = {}) {
 }
 
 function clientReturning(response: ListAllowancesResponse): ApiClient {
-  return { listAllowances: () => Promise.resolve(response) }
+  return {
+    listAllowances: () => Promise.resolve(response),
+    getAllowance: () => Promise.reject(new Error('the list tests do not ask for one allowance')),
+  }
 }
 
 describe('sourceKindFromEnv', () => {
@@ -157,5 +165,92 @@ describe('the API source', () => {
     expect(list.unreadable).toEqual([{ address: OTHER_PDA, reason: 'version' }])
     expect(list.stale).toBe(true)
     expect(list.syncedAt).toBe('2026-09-02T10:00:00.000Z')
+  })
+})
+
+function card(over: Partial<GetAllowanceResponse> = {}): GetAllowanceResponse {
+  return {
+    ...item(),
+    chainState: {
+      status: 'active',
+      capAmount: '24000000',
+      spentInPeriod: '0',
+      periodStartedAt: '2026-08-07T00:00:00.000Z',
+      pausedAt: null,
+      endsAt: null,
+      slot: 400_000_000,
+    },
+    diverged: false,
+    ...over,
+  }
+}
+
+function cardClient(answer: () => Promise<GetAllowanceResponse>): ApiClient {
+  return {
+    listAllowances: () => Promise.reject(new Error('the card tests do not ask for the list')),
+    getAllowance: answer,
+  }
+}
+
+describe('one allowance from the mock', () => {
+  it('finds the one the demo opened', async () => {
+    const first = PERMISSIONS[0]
+    expect(first).toBeDefined()
+    const detail = await createMockSource().getAllowance((first as (typeof PERMISSIONS)[number]).id)
+    expect(detail?.id).toBe((first as (typeof PERMISSIONS)[number]).id)
+    expect(detail?.networkState).toBe('none')
+  })
+
+  it('answers "there is none" instead of inventing one', async () => {
+    expect(await createMockSource().getAllowance('sub-does-not-exist')).toBeNull()
+  })
+})
+
+describe('one allowance from the API', () => {
+  it('reads the card and judges the period by the moment it was read', async () => {
+    const source = createApiSource(
+      cardClient(() =>
+        Promise.resolve(
+          card({
+            syncedAt: '2026-09-02T10:00:00.000Z',
+            periodStartedAt: '2026-08-07T00:00:00.000Z',
+          }),
+        ),
+      ),
+    )
+    const detail = await source.getAllowance(PDA)
+    expect(detail?.address).toBe(PDA)
+    expect(detail?.syncedAt.toISOString()).toBe('2026-09-02T10:00:00.000Z')
+    expect(detail?.periodElapsed).toBe(false)
+  })
+
+  it('turns NOT_FOUND into an answer, not into a failure', async () => {
+    // «За цією адресою дозволу немає ніде» — це відповідь. Показати замість неї
+    // «не вдалося завантажити» означало б назвати збоєм єдину річ, заради якої
+    // продукт існує (`FR-022`).
+    const source = createApiSource(
+      cardClient(() =>
+        Promise.reject(new ApiRequestError(404, 'NOT_FOUND', 'no allowance at this address')),
+      ),
+    )
+    expect(await source.getAllowance(OTHER_PDA)).toBeNull()
+  })
+
+  it('does not swallow any other failure the same way', async () => {
+    const source = createApiSource(
+      cardClient(() => Promise.reject(new ApiRequestError(500, 'INTERNAL', 'account unreadable'))),
+    )
+    await expect(source.getAllowance(PDA)).rejects.toBeInstanceOf(ApiRequestError)
+  })
+
+  it('keeps a permission in a foreign asset readable, with cancelling the only thing left', async () => {
+    const source = createApiSource(
+      cardClient(() =>
+        Promise.resolve(card({ mint: OTHER_MINT, assetSupported: false, capAmount: '500' })),
+      ),
+    )
+    const detail = await source.getAllowance(PDA)
+    expect(detail?.assetSupported).toBe(false)
+    expect(detail?.cap.decimals).toBeNull()
   })
 })

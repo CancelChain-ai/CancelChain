@@ -1,7 +1,14 @@
 import type { Address, UnreadableAllowanceItem } from '@cancelchain/shared'
-import { type ApiClient, createApiClient } from './api.js'
+import { type ApiClient, ApiRequestError, createApiClient } from './api.js'
 import { PERMISSIONS, type Permission } from './mockData.js'
-import { type AllowanceView, viewFromAllowance, viewFromPermission } from './view.js'
+import {
+  type AllowanceDetailView,
+  type AllowanceView,
+  detailFromAllowance,
+  detailFromPermission,
+  viewFromAllowance,
+  viewFromPermission,
+} from './view.js'
 
 /**
  * Звідки екрани беруть дозволи — **єдине** місце, де це вирішується (`T031`).
@@ -40,6 +47,15 @@ export interface AllowanceSource {
   /** Чи є за цим джерелом мережа. Від цього залежить, що застосунок каже про себе. */
   readonly onNetwork: boolean
   listAllowances(owner: Address | null, signal?: AbortSignal): Promise<AllowanceList>
+  /**
+   * Один дозвіл для екрана картки (`T024`).
+   *
+   * `null` — за цією адресою дозволу немає **ніде**: ані в мережі, ані у
+   * сховищі. Це відповідь, а не невдача, і тому вона тут окремим значенням, а
+   * не помилкою: скасований дозвіл — це закритий акаунт, і екран мусить
+   * сказати саме це, а не «не вдалося завантажити».
+   */
+  getAllowance(id: string, signal?: AbortSignal): Promise<AllowanceDetailView | null>
 }
 
 export class WalletRequiredError extends Error {
@@ -88,6 +104,10 @@ export function createMockSource(): AllowanceSource {
         // Вигаданих даних, яких не вдалося прочитати, не буває.
         unreadable: [],
       }),
+    getAllowance: (id) => {
+      const permission = mockData.find(id)
+      return Promise.resolve(permission === undefined ? null : detailFromPermission(permission))
+    },
   }
 }
 
@@ -110,6 +130,23 @@ export function createApiSource(client: ApiClient): AllowanceSource {
         syncedAt: response.syncedAt,
         stale: response.stale,
         unreadable: response.unreadable,
+      }
+    },
+    async getAllowance(id, signal) {
+      try {
+        const card = await client.getAllowance(id, signal)
+        // Той самий годинник, що й у списку: `periodElapsed` судить прочитане
+        // моментом читання, а не моментом малювання.
+        return detailFromAllowance(card, new Date(card.syncedAt))
+      } catch (error) {
+        /*
+         * `NOT_FOUND` — це відповідь «за цією адресою дозволу немає ніде», а не
+         * збій. Вона стає `null` рівно тут, і саме тому екран може сказати
+         * «дозволу немає» замість «не вдалося завантажити» — різниця між цими
+         * двома реченнями і є тим, заради чого продукт існує (`FR-022`).
+         */
+        if (error instanceof ApiRequestError && error.code === 'NOT_FOUND') return null
+        throw error
       }
     },
   }

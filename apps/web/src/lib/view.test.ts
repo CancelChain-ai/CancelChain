@@ -1,8 +1,11 @@
-import type { ListedAllowance } from '@cancelchain/shared'
+import type { AllowanceDetail, ListedAllowance } from '@cancelchain/shared'
 import { describe, expect, it } from 'vitest'
 import { PERMISSIONS } from './mockData'
 import {
   allowedTotal,
+  cardFields,
+  detailFromAllowance,
+  detailFromPermission,
   everyPeriod,
   formatDay,
   formatMoney,
@@ -321,5 +324,216 @@ describe('viewFromPermission', () => {
     const view = viewFromPermission(halcyon as (typeof PERMISSIONS)[number])
     expect(view.cap.amount).toBe(11_500_000n)
     expect(formatMoney(view.cap)).toBe('11.50 USDC')
+  })
+})
+
+/**
+ * Картка одного дозволу (`T024`). Перевіряється рівно те, чим вона
+ * відрізняється від рядка списку: повні адреси, звірка з мережею і п'ять полів
+ * `FR-002`, які мусять бути на екрані **всі** й **разом** (`SC-005`).
+ */
+
+type Card = AllowanceDetail & { assetSupported: boolean }
+
+function chainState(over: Partial<NonNullable<Card['chainState']>> = {}) {
+  return {
+    status: 'active' as const,
+    capAmount: '24000000',
+    spentInPeriod: '12000000',
+    periodStartedAt: '2026-08-07T00:00:00.000Z',
+    pausedAt: null,
+    endsAt: null,
+    slot: 400_000_000,
+    ...over,
+  }
+}
+
+function card(over: Partial<Card> = {}): Card {
+  return { ...listed(), chainState: chainState(), diverged: false, ...over }
+}
+
+/** Разовий дозвіл: періоду немає, а «витрачено» мережа не зберігає взагалі. */
+function oneOff(over: Partial<Card> = {}): Card {
+  return card({
+    kind: 'fixed',
+    periodSeconds: null,
+    periodStartedAt: null,
+    spentInPeriod: '0',
+    capAmount: '11500000',
+    chainState: chainState({ periodStartedAt: null, spentInPeriod: '0', capAmount: '11500000' }),
+    ...over,
+  })
+}
+
+function fieldsOf(detail: ReturnType<typeof detailFromAllowance>) {
+  return Object.fromEntries(cardFields(detail).map((field) => [field.key, field]))
+}
+
+describe('detailFromAllowance', () => {
+  it('keeps the addresses whole, where the list shortens them', () => {
+    const detail = detailFromAllowance(card(), NOW)
+    // Скорочене лишається для заголовка, повне — для звірки.
+    expect(detail.counterparty).not.toBe(MERCHANT)
+    expect(detail.counterpartyAddress).toBe(MERCHANT)
+    expect(detail.address).toBe(PDA)
+    expect(detail.ownerAddress).toBe(OWNER)
+    expect(detail.mintAddress).toBe(USDC)
+  })
+
+  it('points a plan subscription at its plan, not at the merchant wallet', () => {
+    const detail = detailFromAllowance(
+      card({ kind: 'subscription', planPda: PLAN, expiresAt: null }),
+      NOW,
+    )
+    expect(detail.counterpartyAddress).toBe(PLAN)
+    expect(detail.counterpartyLabel).toBe('Merchant plan')
+  })
+
+  it('judges the period by the moment the state was read, not by the clock now', () => {
+    // Без другого аргументу відліком є `syncedAt` відповіді: картка, яка
+    // пролежала на екрані, не має судити прочитане іншим годинником.
+    const detail = detailFromAllowance(
+      card({ syncedAt: '2026-08-20T10:00:00.000Z', periodSeconds: 30 * DAY_SECONDS }),
+    )
+    expect(detail.periodElapsed).toBe(false)
+    expect(detail.syncedAt.toISOString()).toBe('2026-08-20T10:00:00.000Z')
+  })
+
+  it('says the account is gone from the network instead of hiding it', () => {
+    const detail = detailFromAllowance(
+      card({ chainState: null, status: 'revoked', diverged: true }),
+      NOW,
+    )
+    expect(detail.networkState).toBe('absent')
+    expect(detail.diverged).toBe(true)
+    expect(detail.slot).toBe(400_000_000)
+  })
+
+  it('has no activity feed yet — and null is not an empty history', () => {
+    expect(detailFromAllowance(card(), NOW).activity).toBeNull()
+  })
+})
+
+describe('detailFromPermission', () => {
+  it('brings the demo feed with it and says there is no network behind it', () => {
+    const permission = PERMISSIONS[0]
+    expect(permission).toBeDefined()
+    const detail = detailFromPermission(permission as (typeof PERMISSIONS)[number])
+
+    expect(detail.networkState).toBe('none')
+    expect(detail.slot).toBeNull()
+    expect(detail.address).toBeNull()
+    expect(detail.activity).not.toBeNull()
+    expect(detail.activity?.length).toBe(
+      (permission as (typeof PERMISSIONS)[number]).detail.activity.length,
+    )
+  })
+})
+
+describe('the five fields of FR-002 (SC-005)', () => {
+  it('gives five fields, always, in the same order', () => {
+    for (const input of [card(), oneOff(), card({ status: 'revoked', chainState: null })]) {
+      const fields = cardFields(detailFromAllowance(input, NOW))
+      expect(fields).toHaveLength(5)
+      expect(fields.map((field) => field.key)).toEqual([
+        'recipient',
+        'cap',
+        'period',
+        'used',
+        'nextCharge',
+      ])
+    }
+  })
+
+  it('shows the recipient in full, and says what that address is', () => {
+    const fields = fieldsOf(detailFromAllowance(card(), NOW))
+    expect(fields.recipient?.value).toBe(MERCHANT)
+    expect(fields.recipient?.note).toBe('Merchant wallet')
+  })
+
+  it('says a one-off permission spends an unknown amount — not zero', () => {
+    const fields = fieldsOf(detailFromAllowance(oneOff(), NOW))
+    expect(fields.used?.known).toBe(false)
+    expect(fields.used?.value).toBe('The network does not record it')
+    expect(fields.used?.value).not.toContain('0')
+    expect(fields.used?.note).toContain('unknown, not zero')
+  })
+
+  it('calls the ceiling of a one-off permission what is left of it', () => {
+    const fields = fieldsOf(detailFromAllowance(oneOff(), NOW))
+    expect(fields.cap?.label).toBe('Ceiling — what is left')
+    expect(fields.cap?.value).toBe('11.50 USDC')
+    expect(fields.period?.value).toBe('One-off — no period')
+    // Разовий дозвіл можуть списати будь-якої миті — «не заплановано» тут
+    // читалося б як «нічого не станеться».
+    expect(fields.nextCharge?.value).toBe('Any time')
+  })
+
+  it('keeps the period in the unit that divides it whole', () => {
+    const hourly = card({ periodSeconds: HOUR_SECONDS })
+    expect(fieldsOf(detailFromAllowance(hourly, NOW)).period?.value).toBe('1 hour')
+    expect(fieldsOf(detailFromAllowance(card(), NOW)).period?.value).toBe('30 days')
+  })
+
+  it('does not promise a date for a permission that is already cancelled', () => {
+    const fields = fieldsOf(detailFromAllowance(card({ status: 'revoked', chainState: null }), NOW))
+    expect(fields.nextCharge?.value).toBe('Never — this permission is cancelled')
+  })
+
+  it('says "any time now" for a period the network still calls current', () => {
+    // Стеля скидається списанням, а не за годинником: дата в минулому означає
+    // «будь-якої миті», а не «прострочено».
+    const stale = card({
+      periodStartedAt: '2026-06-01T00:00:00.000Z',
+      chainState: chainState({ periodStartedAt: '2026-06-01T00:00:00.000Z' }),
+    })
+    const fields = fieldsOf(detailFromAllowance(stale, NOW))
+    expect(fields.nextCharge?.value).toBe('Any time now')
+    expect(fields.period?.note).toContain('has already ended')
+    expect(fields.used?.note).toContain('already ended')
+  })
+
+  it('names the end date instead of a next charge when it will not renew', () => {
+    const ending = card({
+      kind: 'subscription',
+      planPda: PLAN,
+      endsAt: '2026-10-01T00:00:00.000Z',
+      chainState: chainState({ endsAt: '2026-10-01T00:00:00.000Z' }),
+    })
+    const fields = fieldsOf(detailFromAllowance(ending, NOW))
+    expect(fields.nextCharge?.value).toContain('1 Oct 2026')
+    expect(fields.nextCharge?.note).toContain('will not renew')
+  })
+
+  it('schedules nothing while a subscription is paused', () => {
+    const paused = card({
+      kind: 'subscription',
+      planPda: PLAN,
+      status: 'paused',
+      pausedAt: '2026-08-20T00:00:00.000Z',
+    })
+    expect(fieldsOf(detailFromAllowance(paused, NOW)).nextCharge?.value).toBe(
+      'Nothing scheduled — it is paused',
+    )
+  })
+
+  it('shows a foreign asset in smallest units and says why', () => {
+    const foreign = card({ mint: OTHER_MINT, assetSupported: false, capAmount: '500' })
+    const fields = fieldsOf(detailFromAllowance(foreign, NOW))
+    expect(fields.cap?.value).toContain('500 of ')
+    expect(fields.cap?.note).toContain('does not know its decimals')
+  })
+
+  it('gives the next charge a time, and says the network does not store it', () => {
+    const fields = fieldsOf(detailFromAllowance(card(), NOW))
+    expect(fields.nextCharge?.value).toContain('6 Sep 2026')
+    expect(fields.nextCharge?.note).toContain('does not store this date')
+  })
+
+  it('explains a permission that cannot charge again', () => {
+    const spent = oneOff({ status: 'exhausted', capAmount: '0', chainState: null })
+    const fields = fieldsOf(detailFromAllowance(spent, NOW))
+    expect(fields.nextCharge?.value).toBe('Never')
+    expect(fields.nextCharge?.note).toContain('Nothing is left')
   })
 })

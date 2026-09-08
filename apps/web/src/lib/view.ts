@@ -1,4 +1,5 @@
 import type {
+  AllowanceDetail,
   AllowanceKind,
   AllowanceStatus,
   AllowanceUnreadableReason,
@@ -335,4 +336,292 @@ export function allowedTotal(views: readonly AllowanceView[]): AllowedTotal {
     label: 'USDC',
     count: counted.length,
   }
+}
+
+/**
+ * «Up to 24.00 USDC every 30 days» — або без періоду, якщо його немає.
+ *
+ * Живе тут, а не в компоненті, бо це перетворення моделі в текст, і однакове
+ * воно потрібне і картці списку, і екрану самої картки.
+ */
+export function capSentence(view: AllowanceView): string {
+  const cap = formatMoney(view.cap)
+  if (view.periodSeconds === null) return `Up to ${cap}, one-off`
+  return `Up to ${cap} ${everyPeriod(view.periodSeconds)}`
+}
+
+/**
+ * Чому вичерпаний дозвіл більше не може списати.
+ *
+ * Для разового дозволу `cap` — це **залишок**, а не початкова стеля (структура
+ * акаунта тримає саме залишок), тож нуль у ньому відрізняє «усе взято» від
+ * «сплив строк». Для решти вичерпаність буває лише через строк.
+ */
+export function exhaustedSentence(view: AllowanceView): string {
+  if (view.kind === 'fixed' && view.cap.amount === 0n) {
+    return 'Nothing is left on this one-off permission. It cannot charge again.'
+  }
+  return 'Past its expiry. It cannot charge again.'
+}
+
+/**
+ * Чи стоїть за цим станом мережа, і що вона сказала.
+ *
+ * `absent` — окремий випадок, а не різновид помилки: акаунта в мережі немає,
+ * і це **відповідь**, а не невдача читання (скасований дозвіл — це закритий
+ * акаунт). `none` — джерела без мережі, тобто мок M0.
+ */
+export type NetworkState = 'read' | 'absent' | 'none'
+
+/** Рядок стрічки подій. До `T030` її дає лише мок. */
+export interface ActivityRow {
+  date: string
+  description: string
+  amount: Money | null
+  rejected: boolean
+}
+
+/**
+ * Картка одного дозволу (`GET /v1/allowances/:pda`) — усе, що знає список,
+ * плюс те, що є лише тут: повні адреси, звірка з мережею і стрічка.
+ *
+ * Адреси тут **не скорочені**, на відміну від списку: картка — це те місце, де
+ * адресу звіряють із чимось іншим, а `9xQe…3Nde` звірити ні з чим не можна.
+ */
+export interface AllowanceDetailView extends AllowanceView {
+  /** PDA дозволу. `null` — у мока адреси немає взагалі. */
+  address: string | null
+  /** Гаманець, який видав дозвіл. `null` — мок. */
+  ownerAddress: string | null
+  /** Повна адреса отримувача: гаманець мерчанта або план. */
+  counterpartyAddress: string
+  /** Мін активу. `null` — мок, у якого міна немає. */
+  mintAddress: string | null
+  /** Початок періоду, який мережа вважає поточним. */
+  periodStartedAt: Date | null
+  /** Коли дозвіл видано, якщо ми це знаємо. */
+  givenOn: Date | null
+  /** Назва плану. Мережа її не зберігає — вона офчейн-метадані мерчанта. */
+  planName: string | null
+  /** Збережений стан розійшовся з мережею (`FR-024`, `FR-025`). */
+  diverged: boolean
+  networkState: NetworkState
+  /** Коли цей стан прочитано. */
+  syncedAt: Date
+  /** Слот, на якому його прочитано. `null` — мережі за цим станом немає. */
+  slot: number | null
+  /**
+   * Стрічка подій. `null` — цього джерела ще немає (`T030`), і це **не** те
+   * саме, що «подій не було»: порожній масив був би твердженням про історію,
+   * якої ми не читали.
+   */
+  activity: ActivityRow[] | null
+}
+
+/** Тіло `GET /v1/allowances/:pda`: збережений стан, звірений із мережею. */
+type AllowanceCardData = AllowanceDetail & { assetSupported: boolean }
+
+/**
+ * Відповідь картки → модель показу.
+ *
+ * Момент відліку той самий, що й у списку, і за замовчуванням це `syncedAt`
+ * відповіді, а не `new Date()`: `periodElapsed` судить прочитане тим самим
+ * годинником, яким його прочитали.
+ */
+export function detailFromAllowance(
+  card: AllowanceCardData,
+  now = new Date(card.syncedAt),
+): AllowanceDetailView {
+  const subscription = card.kind === 'subscription'
+  return {
+    ...viewFromAllowance(card, now),
+    address: card.pda,
+    ownerAddress: card.owner,
+    counterpartyAddress: subscription ? (card.planPda ?? card.delegate) : card.delegate,
+    mintAddress: card.mint,
+    periodStartedAt: dateOrNull(card.periodStartedAt),
+    // Дати видачі в акаунті немає — вона прийде зі стрічки подій (`T030`).
+    givenOn: null,
+    // Назви плану в мережі немає: план тримає суму, період і мін, не назву.
+    planName: null,
+    diverged: card.diverged,
+    networkState: card.chainState === null ? 'absent' : 'read',
+    syncedAt: new Date(card.syncedAt),
+    slot: card.chainState?.slot ?? card.lastSlot,
+    activity: null,
+  }
+}
+
+/** Мок M0 → та сама картка. Тут стрічка є, і мережі немає. */
+export function detailFromPermission(permission: Permission): AllowanceDetailView {
+  return {
+    ...viewFromPermission(permission),
+    address: null,
+    ownerAddress: null,
+    counterpartyAddress: permission.recipient,
+    mintAddress: null,
+    periodStartedAt: mockDate(permission.detail.periodStarted),
+    givenOn: mockDate(permission.detail.givenOn),
+    planName: permission.planName ?? null,
+    diverged: false,
+    networkState: 'none',
+    syncedAt: new Date(),
+    slot: null,
+    activity: permission.detail.activity.map((event) => ({
+      date: event.date,
+      description: event.description,
+      amount: event.amount === null ? null : mockMoney(event.amount, permission),
+      rejected: event.rejected,
+    })),
+  }
+}
+
+/**
+ * П'ять полів `FR-002`, які мусять бути видні **разом**, без переходу на інший
+ * екран (`SC-005`).
+ *
+ * Перелік — кортеж, а не масив за смаком верстки: «п'ять із п'яти» тут
+ * структурний факт, який ламає збірку, а не домовленість, яку легко втратити
+ * при наступній правці екрана.
+ */
+export const FR002_FIELDS = ['recipient', 'cap', 'period', 'used', 'nextCharge'] as const
+export type Fr002Field = (typeof FR002_FIELDS)[number]
+
+export interface CardField {
+  key: Fr002Field
+  label: string
+  /** Значення — рядок завжди, навіть коли цей рядок каже «ніхто не знає». */
+  value: string
+  /** Уточнення, без якого саме значення назвало б не те. */
+  note: string | null
+  /**
+   * Значення відоме. `false` означає, що мережа цього **не зберігає**, і поле
+   * стоїть на місці не для симетрії: `SC-005` вимагає п'яти полів, а порожнє
+   * місце або нуль на місці п'ятого — це не поле, а вигадка.
+   */
+  known: boolean
+}
+
+const SMALLEST_UNITS_NOTE =
+  'Shown in the smallest units of that asset — CancelChain does not know its decimals.'
+
+function recipientField(detail: AllowanceDetailView): CardField {
+  return {
+    key: 'recipient',
+    label: 'Recipient',
+    value: detail.counterpartyAddress,
+    note:
+      detail.planName === null
+        ? detail.counterpartyLabel
+        : `${detail.counterpartyLabel} · ${detail.planName}`,
+    known: true,
+  }
+}
+
+function capField(detail: AllowanceDetailView): CardField {
+  const oneOff = detail.kind === 'fixed'
+  const notes = [
+    oneOff
+      ? 'A one-off permission stores what is still left to take, not what it was given for.'
+      : null,
+    detail.cap.decimals === null ? SMALLEST_UNITS_NOTE : null,
+  ].filter((note): note is string => note !== null)
+
+  return {
+    key: 'cap',
+    label: oneOff ? 'Ceiling — what is left' : 'Ceiling',
+    value: formatMoney(detail.cap),
+    note: notes.length === 0 ? null : notes.join(' '),
+    known: true,
+  }
+}
+
+function periodField(detail: AllowanceDetailView): CardField {
+  const started = detail.periodStartedAt
+  return {
+    key: 'period',
+    label: 'Period',
+    value:
+      detail.periodSeconds === null ? 'One-off — no period' : formatPeriod(detail.periodSeconds),
+    note:
+      started === null
+        ? null
+        : detail.periodElapsed
+          ? `The period that started ${formatDay(started)} has already ended.`
+          : `Current period started ${formatDay(started)}.`,
+    known: true,
+  }
+}
+
+function usedField(detail: AllowanceDetailView): CardField {
+  if (detail.used === null) {
+    return {
+      key: 'used',
+      label: 'Spent this period',
+      // Не «0.00»: нуль тут був би твердженням про чужі гроші, якого ніхто не робив.
+      value: 'The network does not record it',
+      note: 'A one-off permission keeps only what is left of it, never what has already been taken. This is unknown, not zero.',
+      known: false,
+    }
+  }
+  return {
+    key: 'used',
+    label: 'Spent this period',
+    value: formatMoney(detail.used),
+    note: detail.periodElapsed
+      ? 'Spent in the period that has already ended. The next charge resets it.'
+      : null,
+    known: true,
+  }
+}
+
+/**
+ * Коли спишуть наступного разу — словами, бо «—» на цьому місці однаково
+ * означало б і «ніколи», і «будь-якої миті», а це протилежні речі.
+ */
+function nextChargeField(detail: AllowanceDetailView): CardField {
+  const field = (value: string, note: string | null = null): CardField => ({
+    key: 'nextCharge',
+    label: 'Next charge',
+    value,
+    note,
+    known: true,
+  })
+
+  if (detail.status === 'revoked') return field('Never — this permission is cancelled')
+  if (detail.status === 'exhausted') return field('Never', exhaustedSentence(detail))
+  if (detail.status === 'paused') return field('Nothing scheduled — it is paused')
+  if (detail.endsOn !== null) {
+    return field(`None — it ends ${formatDay(detail.endsOn)}`, 'It will not renew after that date.')
+  }
+  if (detail.periodSeconds === null) {
+    return field(
+      'Any time',
+      'A one-off permission has no schedule: it can be charged at any moment until it is spent or expires.',
+    )
+  }
+  if (detail.periodElapsed) {
+    return field(
+      'Any time now',
+      'The period the network is counting has already ended. The ceiling resets on the next charge, not on the clock.',
+    )
+  }
+  if (detail.nextCharge === null) return field('Not scheduled')
+  return field(
+    `${formatDay(detail.nextCharge)}, ${formatClock(detail.nextCharge)}`,
+    'Calculated from the start of the period and its length — the network does not store this date.',
+  )
+}
+
+/** П'ять полів `FR-002` у сталому порядку. Рівно п'ять, завжди. */
+export function cardFields(
+  detail: AllowanceDetailView,
+): [CardField, CardField, CardField, CardField, CardField] {
+  return [
+    recipientField(detail),
+    capField(detail),
+    periodField(detail),
+    usedField(detail),
+    nextChargeField(detail),
+  ]
 }
