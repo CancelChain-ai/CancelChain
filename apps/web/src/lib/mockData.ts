@@ -75,6 +75,11 @@ export const ASSET_DECIMALS: Record<Asset, number> = {
   CPRL: 0,
 }
 
+/** '27 Sep 2026' -> '27 Sep'. Повна дата лишається на екрані картки. */
+export function shortDate(date: string): string {
+  return date.split(' ').slice(0, 2).join(' ')
+}
+
 export function formatAmount(value: number, asset: Asset): string {
   const decimals = ASSET_DECIMALS[asset]
   return `${value.toFixed(decimals)} ${asset}`

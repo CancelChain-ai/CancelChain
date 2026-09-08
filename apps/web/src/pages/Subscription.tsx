@@ -1,6 +1,5 @@
 import ConsentStrip from '../components/ConsentStrip'
-import { shortDate } from '../components/PermissionCard'
-import { formatAmount, type Permission } from '../lib/mockData'
+import { formatAmount, type Permission, shortDate } from '../lib/mockData'
 
 interface SubscriptionProps {
   permission: Permission
