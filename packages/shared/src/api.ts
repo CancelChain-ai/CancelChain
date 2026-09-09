@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { allowanceDetailSchema, allowanceSchema, eventSchema, planSchema } from './allowance.js'
-import { addressSchema, slotSchema, timestampSchema, u64Schema } from './primitives.js'
+import {
+  addressSchema,
+  blockhashSchema,
+  slotSchema,
+  timestampSchema,
+  u64Schema,
+} from './primitives.js'
 
 /**
  * Контракти `/v1`. Одні й ті самі схеми валідують запит на сервері й розбирають
@@ -12,6 +18,28 @@ export const healthResponseSchema = z.object({
   slot: slotSchema,
   lagSeconds: z.number().nonnegative(),
 })
+
+/**
+ * Час життя транзакції для браузера — `GET /v1/blockhash` (`FR-003`).
+ *
+ * Ручка існує не тому, що сервер щось підписує, — він гаманця не має й мати не
+ * буде. Вона існує тому, що **URL вузла з ключем провайдера в браузер не
+ * потрапляє**: усе під префіксом `VITE_` вбудовується в бандл, тобто
+ * публікується. А з `getLatestBlockhash` сервер віддає рівно те, що будь-який
+ * RPC-вузол віддасть кожному, хто спитає.
+ *
+ * `lastValidBlockHeight` — u64, тож їде **рядком** (`primitives.ts`): висота
+ * блоку в double влізе ще довго, але правило про u64 не має винятків «поки що
+ * влазить», інакше перший виняток стає прецедентом для суми.
+ */
+export const latestBlockhashResponseSchema = z.object({
+  blockhash: blockhashSchema,
+  lastValidBlockHeight: u64Schema,
+  /** Слот, на якому хеш прочитано. Показувати не обов'язково — звіряти корисно. */
+  slot: slotSchema,
+})
+
+export type LatestBlockhashResponse = z.infer<typeof latestBlockhashResponseSchema>
 
 export const listAllowancesQuerySchema = z.object({
   owner: addressSchema,

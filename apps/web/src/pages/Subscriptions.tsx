@@ -1,4 +1,6 @@
-import AllowanceCard from '../components/AllowanceCard'
+import type { CancelControls } from '../chain/revoke'
+import { stepLabel } from '../chain/revoke'
+import AllowanceCard, { type CancelNotice } from '../components/AllowanceCard'
 import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
 import {
@@ -34,7 +36,47 @@ interface SubscriptionsProps {
   /** Чи стоїть за списком мережа: від цього залежить, що екран каже про себе. */
   onNetwork: boolean
   onOpen?: ((id: string) => void) | undefined
-  onCancel?: ((id: string) => void) | undefined
+  /**
+   * Скасування (`FR-003`). Немає — кнопки немає взагалі: над справжніми
+   * дозволами кнопка, яка нічого не підписує, гірша за її відсутність.
+   */
+  cancel?: CancelControls | undefined
+}
+
+/**
+ * Підсумок потоку для однієї картки.
+ *
+ * `unconfirmed` навмисно **не** зелений і не червоний. Гаманець повернув
+ * підпис, а акаунт лишився на місці: це стан «невідомо», і назвати його
+ * успіхом означало б сказати про чужі гроші те, чого ми не перевірили.
+ */
+function noticeFor(state: CancelControls['state'], id: string): CancelNotice | null {
+  if (!('id' in state) || state.id !== id) return null
+  switch (state.status) {
+    case 'gone':
+      return {
+        tone: 'good',
+        text: 'This permission was already gone before anything was signed. Nothing was sent.',
+      }
+    case 'done':
+      return {
+        tone: 'good',
+        text: `Cancelled. The permission account no longer exists on the network — the next charge has nothing to charge against. Transaction ${state.signature}.`,
+      }
+    case 'unconfirmed':
+      return {
+        tone: 'warn',
+        text: `Your wallet reported transaction ${state.signature}, but the permission is still on the network. It may still land, or it may have failed — this is not a confirmation.`,
+      }
+    case 'failed':
+      return { tone: 'bad', text: state.message }
+    default:
+      return null
+  }
+}
+
+function progressFor(state: CancelControls['state'], id: string): string | null {
+  return state.status === 'working' && state.id === id ? stepLabel(state.step) : null
 }
 
 const Notice = ({ children }: { children: React.ReactNode }) => (
@@ -142,7 +184,7 @@ const Unreadable = ({ list }: { list: AllowanceList }) => {
   )
 }
 
-const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, onCancel }: SubscriptionsProps) => {
+const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, cancel }: SubscriptionsProps) => {
   if (state.status === 'no-wallet') {
     return (
       <Notice>
@@ -180,6 +222,17 @@ const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, onCancel }: Subs
         </p>
       )}
 
+      {/*
+        Чому кнопки немає — сказано вголос. Мовчазна відсутність головної дії
+        продукту виглядала б як «тут нічого не можна», а причина щоразу інша:
+        гаманця немає, гаманець не підписує, або це демо.
+      */}
+      {cancel?.unavailable != null && (
+        <p className="mt-6 max-w-[560px] text-[12px] leading-relaxed text-amber">
+          {cancel.unavailable}
+        </p>
+      )}
+
       {items.length === 0 ? (
         <Notice>
           No one can charge this wallet. Nothing here means nothing is running — not that we failed
@@ -188,7 +241,15 @@ const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, onCancel }: Subs
       ) : (
         <div className="mt-10 grid grid-cols-1 gap-5 lg:grid-cols-2">
           {items.map((view) => (
-            <AllowanceCard key={view.id} view={view} onOpen={onOpen} onCancel={onCancel} />
+            <AllowanceCard
+              key={view.id}
+              view={view}
+              onOpen={onOpen}
+              onCancel={cancel?.cancel ?? undefined}
+              cancelProgress={cancel === undefined ? null : progressFor(cancel.state, view.id)}
+              cancelNotice={cancel === undefined ? null : noticeFor(cancel.state, view.id)}
+              onDismissCancel={cancel?.dismiss}
+            />
           ))}
         </div>
       )}

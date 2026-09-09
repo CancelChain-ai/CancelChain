@@ -28,6 +28,24 @@ interface AllowanceCardProps {
   onOpen?: ((id: string) => void) | undefined
   /** Немає — кнопки скасування немає. Кнопка, яка нічого не робить, гірша за її відсутність. */
   onCancel?: ((id: string) => void) | undefined
+  /**
+   * Що просто зараз відбувається зі скасуванням **цього** дозволу. `null` —
+   * потік його не стосується. Поки рядок непорожній, картка не пропонує нічого:
+   * підпис уже в гаманці, і другий клік не має що додати (`SC-002`).
+   */
+  cancelProgress?: string | null
+  /** Підсумок потоку: скасовано, невизначено або не вийшло. */
+  cancelNotice?: CancelNotice | null
+  onDismissCancel?: (() => void) | undefined
+}
+
+/** Тон підсумку. `warn` — саме «невідомо», а не пом'якшена невдача. */
+export type CancelNotice = { tone: 'good' | 'warn' | 'bad'; text: string }
+
+const NOTICE_STYLES: Record<CancelNotice['tone'], string> = {
+  good: 'border-ink/30 text-ink/80',
+  warn: 'border-amber text-amber',
+  bad: 'border-rust text-rust',
 }
 
 type TagTone = 'quiet' | 'outline' | 'amber' | 'grey'
@@ -47,7 +65,14 @@ const Tag = ({ children, tone = 'quiet' }: { children: string; tone?: TagTone })
   </span>
 )
 
-const AllowanceCard = ({ view, onOpen, onCancel }: AllowanceCardProps) => {
+const AllowanceCard = ({
+  view,
+  onOpen,
+  onCancel,
+  cancelProgress = null,
+  cancelNotice = null,
+  onDismissCancel,
+}: AllowanceCardProps) => {
   const [confirming, setConfirming] = useState(false)
 
   const { id, title, counterparty, counterpartyLabel, kindLabel, status } = view
@@ -76,7 +101,7 @@ const AllowanceCard = ({ view, onOpen, onCancel }: AllowanceCardProps) => {
 
   // Поки відкрите підтвердження, картка не веде нікуди: клік по ній не має
   // забирати людину на інший екран посеред рішення про скасування.
-  const interactive = onOpen !== undefined && !revoked && !confirming
+  const interactive = onOpen !== undefined && !revoked && !confirming && cancelProgress === null
 
   const confirmSentence = paused
     ? 'Cancelling stops all future charges immediately. You are not being charged while it is paused, but the permission still exists until you cancel it.'
@@ -209,7 +234,33 @@ const AllowanceCard = ({ view, onOpen, onCancel }: AllowanceCardProps) => {
           </p>
         )}
 
-        {onCancel !== undefined && !revoked && !confirming && (
+        {cancelProgress !== null && (
+          <p className="mt-5 rounded-md border border-hairline p-4 text-[13px] leading-relaxed text-ink/80">
+            {cancelProgress}
+          </p>
+        )}
+
+        {cancelNotice !== null && cancelProgress === null && (
+          <div
+            className={`mt-5 rounded-md border p-4 text-[13px] leading-relaxed ${NOTICE_STYLES[cancelNotice.tone]}`}
+          >
+            <p>{cancelNotice.text}</p>
+            {onDismissCancel !== undefined && (
+              <button
+                type="button"
+                onClick={(event) => {
+                  stop(event)
+                  onDismissCancel()
+                }}
+                className="mt-3 text-[12px] text-ink/55 underline underline-offset-4"
+              >
+                Dismiss
+              </button>
+            )}
+          </div>
+        )}
+
+        {onCancel !== undefined && !revoked && !confirming && cancelProgress === null && (
           <div className="mt-5 flex flex-col gap-2">
             <button type="button" onClick={openConfirm} className={`${buttonBase} text-rust`}>
               Cancel
@@ -217,7 +268,7 @@ const AllowanceCard = ({ view, onOpen, onCancel }: AllowanceCardProps) => {
           </div>
         )}
 
-        {onCancel !== undefined && !revoked && confirming && (
+        {onCancel !== undefined && !revoked && confirming && cancelProgress === null && (
           <div className="mt-5 rounded-md border border-hairline p-4">
             <p className="text-[13px] leading-relaxed text-ink/80">{confirmSentence}</p>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">

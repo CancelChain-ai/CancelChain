@@ -72,6 +72,21 @@ function main(): void {
       cached: (pda) => cachedAllowance(database.db, pda),
       settlementMint: chain.usdcMint,
     },
+    blockhash: {
+      // `confirmed`, як і слот у `/health`: `finalized` дав би хеш на пів
+      // хвилини старший, тобто вкоротив би вікно, у якому гаманець ще встигає
+      // надіслати підписану транзакцію.
+      latestBlockhash: async () => {
+        const { context, value } = await chain.rpc
+          .getLatestBlockhash({ commitment: 'confirmed' })
+          .send()
+        return {
+          blockhash: value.blockhash,
+          lastValidBlockHeight: value.lastValidBlockHeight,
+          slot: Number(context.slot),
+        }
+      },
+    },
   })
 
   const server = serve({ fetch: app.fetch, port: config.port, hostname: '0.0.0.0' }, (info) => {

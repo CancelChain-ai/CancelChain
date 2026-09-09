@@ -2,6 +2,7 @@ import type { Address, ErrorCode } from '@cancelchain/shared'
 import {
   apiErrorSchema,
   getAllowanceResponseSchema,
+  latestBlockhashResponseSchema,
   listAllowancesResponseSchema,
 } from '@cancelchain/shared'
 import type { z } from 'zod'
@@ -19,6 +20,7 @@ import type { z } from 'zod'
 
 export type ListAllowancesResponse = z.infer<typeof listAllowancesResponseSchema>
 export type GetAllowanceResponse = z.infer<typeof getAllowanceResponseSchema>
+export type LatestBlockhashResponse = z.infer<typeof latestBlockhashResponseSchema>
 
 /** Сервер відповів помилкою у форматі `shared`: код і повідомлення відомі. */
 export class ApiRequestError extends Error {
@@ -67,6 +69,11 @@ export interface ApiClient {
    * (`source.ts`), а клієнт лишається однією тонкою межею з HTTP.
    */
   getAllowance(pda: string, signal?: AbortSignal): Promise<GetAllowanceResponse>
+  /**
+   * Час життя транзакції відкликання. Береться в сервера, а не в браузера:
+   * URL вузла з ключем провайдера в бандл не потрапляє (`routes/blockhash.ts`).
+   */
+  getBlockhash(signal?: AbortSignal): Promise<LatestBlockhashResponse>
 }
 
 /** Мінімум від `fetch`, потрібний клієнтові. Вужче — щоб тест не підробляв усе. */
@@ -123,6 +130,7 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
       ),
     getAllowance: (pda, signal) =>
       get(`/v1/allowances/${encodeURIComponent(pda)}`, getAllowanceResponseSchema, signal),
+    getBlockhash: (signal) => get('/v1/blockhash', latestBlockhashResponseSchema, signal),
   }
 }
 

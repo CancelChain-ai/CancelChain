@@ -3,6 +3,7 @@ import { errorHandler, notFoundHandler } from './errors.js'
 import { type Logger, requestLogger } from './logger.js'
 import { type RateLimitOptions, rateLimit } from './rateLimit.js'
 import { type AllowancesDeps, allowanceRoute, allowancesRoute } from './routes/allowances.js'
+import { type BlockhashDeps, blockhashRoute } from './routes/blockhash.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
 import type { AppEnv } from './types.js'
 
@@ -10,6 +11,7 @@ export type AppDeps = {
   logger: Logger
   health: HealthDeps
   allowances: AllowancesDeps
+  blockhash: BlockhashDeps
   rateLimit?: RateLimitOptions
 }
 
@@ -34,6 +36,7 @@ export function createApp(deps: AppDeps) {
     .route('/', healthRoute(deps.health))
     .route('/', allowancesRoute(deps.allowances))
     .route('/', allowanceRoute(deps.allowances))
+    .route('/', blockhashRoute(deps.blockhash))
 }
 
 export type App = ReturnType<typeof createApp>

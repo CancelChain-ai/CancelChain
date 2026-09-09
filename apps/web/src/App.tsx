@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { CancelFlow } from './chain/revoke'
 import { WalletMenu } from './chain/WalletMenu'
 import { useWalletEnvironment } from './chain/WalletProvider'
 import { shortenAddress, useWalletOwner } from './chain/wallet'
@@ -161,22 +162,32 @@ const App = () => {
         )}
 
         {view === 'subscriptions' && (
-          <Subscriptions
-            state={allowances}
-            walletLabel={walletLabel}
-            onNetwork={source.onNetwork}
-            onOpen={openDetail}
-          />
+          <CancelFlow>
+            {(cancel) => (
+              <Subscriptions
+                state={allowances}
+                walletLabel={walletLabel}
+                onNetwork={source.onNetwork}
+                onOpen={openDetail}
+                cancel={cancel}
+              />
+            )}
+          </CancelFlow>
         )}
 
         {view === 'detail' &&
           (selectedId === null ? (
-            <Subscriptions
-              state={allowances}
-              walletLabel={walletLabel}
-              onNetwork={source.onNetwork}
-              onOpen={openDetail}
-            />
+            <CancelFlow>
+              {(cancel) => (
+                <Subscriptions
+                  state={allowances}
+                  walletLabel={walletLabel}
+                  onNetwork={source.onNetwork}
+                  onOpen={openDetail}
+                  cancel={cancel}
+                />
+              )}
+            </CancelFlow>
           ) : (
             <Subscription
               state={allowance}

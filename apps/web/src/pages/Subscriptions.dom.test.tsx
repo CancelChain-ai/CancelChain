@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import type { ListedAllowance } from '@cancelchain/shared'
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it } from 'vitest'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { CancelControls, CancelState } from '../chain/revoke'
 import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
 import { viewFromAllowance as toView } from '../lib/view'
@@ -68,9 +69,18 @@ function ready(over: Partial<AllowanceList> = {}): AllowancesState {
   return { status: 'ready', list: list(over), refreshing: false, refreshFailed: null }
 }
 
+function controls(onCancel: (id: string) => void): CancelControls {
+  return { state: { status: 'idle' }, cancel: onCancel, unavailable: null, dismiss: () => {} }
+}
+
 function show(state: AllowancesState, onCancel?: (id: string) => void) {
   render(
-    <Subscriptions state={state} walletLabel="4DYh…Jj96" onNetwork={true} onCancel={onCancel} />,
+    <Subscriptions
+      state={state}
+      walletLabel="4DYh…Jj96"
+      onNetwork={true}
+      cancel={onCancel === undefined ? undefined : controls(onCancel)}
+    />,
   )
 }
 
@@ -312,5 +322,106 @@ describe('a card of real data', () => {
     )
     expect(screen.getByText(/Ends 27 Sep — won't renew/i)).toBeDefined()
     expect(screen.getByText(/Expires 5 Oct/i)).toBeDefined()
+  })
+})
+
+/**
+ * Потік скасування зі списку — `T026`, `FR-003`, `FR-019`, `FR-026`.
+ *
+ * Тут і міряється кліковий бік `SC-002`: від картки до підпису рівно два
+ * кліки. Другий бік критерію — один підпис — доводить не екран, а білдер:
+ * у транзакції рівно одне місце під підпис (`packages/chain/src/revoke.test.ts`).
+ */
+describe('cancelling from the list', () => {
+  function withCancel(state: CancelState, cancel: ((id: string) => void) | null = () => {}) {
+    render(
+      <Subscriptions
+        state={ready()}
+        walletLabel="4DYh…Jj96"
+        onNetwork={true}
+        cancel={{ state, cancel, unavailable: null, dismiss: () => {} }}
+      />,
+    )
+  }
+
+  it('SC-002: two clicks from the card to the signature, and not a third', () => {
+    const cancel = vi.fn()
+    withCancel({ status: 'idle' }, cancel)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(cancel).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this permission' }))
+    expect(cancel).toHaveBeenCalledTimes(1)
+    expect(cancel).toHaveBeenCalledWith(PDA)
+  })
+
+  it('FR-026: the confirmation names the paid-until date and whose decision access is', () => {
+    withCancel({ status: 'idle' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const text = screen.getByText(/already paid for the period ending/i).textContent ?? ''
+    expect(text).toMatch(/their decision, not ours/i)
+  })
+
+  it('offers nothing more while the signature is in the wallet', () => {
+    withCancel({ status: 'working', id: PDA, step: 'signing' })
+    expect(screen.getByText(/waiting for your wallet to sign/i)).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel this permission' })).toBeNull()
+  })
+
+  it('an unconfirmed send is not reported as cancelled', () => {
+    withCancel({ status: 'unconfirmed', id: PDA, signature: 'abc123' })
+    const text = screen.getByText(/still on the network/i).textContent ?? ''
+    expect(text).toMatch(/this is not a confirmation/i)
+    expect(screen.queryByText(/^Cancelled\./)).toBeNull()
+  })
+
+  it('a permission that was already gone is an answer, not a failure', () => {
+    withCancel({ status: 'gone', id: PDA })
+    expect(screen.getByText(/already gone before anything was signed/i)).toBeDefined()
+  })
+
+  it('a declined signature is shown as the wallet said it, not as a crash', () => {
+    withCancel({ status: 'failed', id: PDA, message: 'You declined the signature in your wallet.' })
+    expect(screen.getByText(/You declined the signature/i)).toBeDefined()
+  })
+
+  it('the progress of one card does not touch another', () => {
+    render(
+      <Subscriptions
+        state={ready({
+          items: [viewFromAllowance(listed()), viewFromAllowance(listed({ pda: OTHER_PDA }))],
+        })}
+        walletLabel="4DYh…Jj96"
+        onNetwork={true}
+        cancel={{
+          state: { status: 'working', id: PDA, step: 'confirming' },
+          cancel: () => {},
+          unavailable: null,
+          dismiss: () => {},
+        }}
+      />,
+    )
+    expect(screen.getAllByText(/waiting for the network to drop/i)).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Cancel' })).toHaveLength(1)
+  })
+
+  it('says why cancelling is unavailable instead of hiding the button silently', () => {
+    render(
+      <Subscriptions
+        state={ready()}
+        walletLabel="4DYh…Jj96"
+        onNetwork={true}
+        cancel={{
+          state: { status: 'idle' },
+          cancel: null,
+          unavailable: 'This wallet cannot sign, so cancelling is unavailable here.',
+          dismiss: () => {},
+        }}
+      />,
+    )
+    expect(screen.getByText(/This wallet cannot sign/i)).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
   })
 })

@@ -1,5 +1,12 @@
+import type { RevokeLifetime } from '@cancelchain/chain'
+import { toBlockhash } from '@cancelchain/chain'
 import type { Address, UnreadableAllowanceItem } from '@cancelchain/shared'
-import { type ApiClient, ApiRequestError, createApiClient } from './api.js'
+import {
+  type ApiClient,
+  ApiRequestError,
+  createApiClient,
+  type GetAllowanceResponse,
+} from './api.js'
 import { PERMISSIONS, type Permission } from './mockData.js'
 import {
   type AllowanceDetailView,
@@ -36,8 +43,32 @@ export interface AllowanceList {
   unreadable: UnreadableAllowanceItem[]
 }
 
+/**
+ * Те, без чого не побудувати транзакцію відкликання (`T026`).
+ *
+ * Окремо від читання списку, бо це інша обіцянка: тут не «показати», а
+ * «звірити перед дією». `readNow` віддає **сиру** відповідь, а не модель
+ * показу, і саме тому: білдеру потрібні `kind`, `owner` і `planPda`, а
+ * `counterpartyAddress` у моделі показу для підписки й для решти означає різне.
+ */
+export interface AllowanceActions {
+  /**
+   * Стан дозволу просто зараз (`FR-024`). `null` — акаунта немає ніде: дозвіл
+   * уже закрито, і підписувати нічого. Це відповідь, а не невдача.
+   */
+  readNow(pda: string, signal?: AbortSignal): Promise<GetAllowanceResponse | null>
+  /** Час життя транзакції з мережі. */
+  latestLifetime(signal?: AbortSignal): Promise<RevokeLifetime>
+}
+
 export interface AllowanceSource {
   readonly kind: SourceKind
+  /**
+   * Дії, що доходять до мережі. `null` — за джерелом мережі немає (мок), і
+   * кнопка скасування там лишається демонстраційною: вона міняє число на
+   * екрані й нічого не підписує.
+   */
+  readonly actions: AllowanceActions | null
   /**
    * Чи потрібен підключений гаманець. Мок обходиться без нього — і саме тому
    * інтерфейс мусить це питати, а не вважати відсутність гаманця порожнім
@@ -94,6 +125,7 @@ export const mockData = {
 export function createMockSource(): AllowanceSource {
   return {
     kind: 'mock',
+    actions: null,
     requiresWallet: false,
     onNetwork: false,
     listAllowances: () =>
@@ -114,6 +146,27 @@ export function createMockSource(): AllowanceSource {
 export function createApiSource(client: ApiClient): AllowanceSource {
   return {
     kind: 'api',
+    actions: {
+      async readNow(pda, signal) {
+        try {
+          return await client.getAllowance(pda, signal)
+        } catch (error) {
+          // Та сама межа, що й у `getAllowance`: «за цією адресою нічого немає»
+          // — це відповідь. Тут вона означає «скасовувати вже нічого».
+          if (error instanceof ApiRequestError && error.code === 'NOT_FOUND') return null
+          throw error
+        }
+      },
+      async latestLifetime(signal) {
+        const { blockhash, lastValidBlockHeight } = await client.getBlockhash(signal)
+        return {
+          // Перевірка, а не приведення типу: зіпсований хеш падає тут, а не в
+          // гаманці, тобто до того, як людина побачить вікно підпису.
+          blockhash: toBlockhash(blockhash),
+          lastValidBlockHeight: BigInt(lastValidBlockHeight),
+        }
+      },
+    },
     requiresWallet: true,
     onNetwork: true,
     async listAllowances(owner, signal) {

@@ -85,6 +85,13 @@ function app(allowances: Partial<AppDeps['allowances']> = {}) {
       settlementMint: USDC,
       ...allowances,
     },
+    blockhash: {
+      latestBlockhash: async () => ({
+        blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',
+        lastValidBlockHeight: 492_096_495n,
+        slot: SLOT,
+      }),
+    },
   })
 }
 

@@ -11,6 +11,7 @@ import type {
 } from '@solana/kit'
 import {
   appendTransactionMessageInstruction,
+  assertIsBlockhash,
   compileTransaction,
   createNoopSigner,
   createTransactionMessage,
@@ -77,6 +78,16 @@ export type RevokeInput = {
 export type RevokeLifetime = {
   blockhash: Blockhash
   lastValidBlockHeight: bigint
+}
+
+/**
+ * Рядок у брендований `Blockhash` — із перевіркою, а не приведенням типу.
+ * Той самий підхід, що й `toAddress`: `as Blockhash` пропустив би в транзакцію
+ * будь-який рядок, і невалідний хеш упав би аж у гаманці, тобто після кліку.
+ */
+export function toBlockhash(value: string): Blockhash {
+  assertIsBlockhash(value)
+  return value
 }
 
 export type RevokeTransactionInput = RevokeInput & { lifetime: RevokeLifetime }

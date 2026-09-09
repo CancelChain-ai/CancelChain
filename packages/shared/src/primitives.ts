@@ -16,6 +16,14 @@ export const signatureSchema = z
   .regex(BASE58_SIGNATURE, 'expected a base58 transaction signature')
 
 /**
+ * Хеш блоку — теж 32 байти base58, тобто формою не відрізняється від адреси.
+ * Окрема схема тут не заради перевірки, а заради назви: `addressSchema` на
+ * полі `blockhash` читалося б як «сюди можна покласти адресу», і саме так
+ * помилка й виглядала б — валідною.
+ */
+export const blockhashSchema = z.string().regex(BASE58_ADDRESS, 'expected a base58 blockhash')
+
+/**
  * Сума в найменших одиницях активу — через JSON їде **рядком**, не числом.
  *
  * u64 не влазить у double: USDC має 6 знаків, тож будь-яка сума понад ~9 млрд

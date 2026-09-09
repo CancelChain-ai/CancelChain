@@ -51,6 +51,7 @@ function clientReturning(response: ListAllowancesResponse): ApiClient {
   return {
     listAllowances: () => Promise.resolve(response),
     getAllowance: () => Promise.reject(new Error('the list tests do not ask for one allowance')),
+    getBlockhash: () => Promise.reject(new Error('the list tests do not build a transaction')),
   }
 }
 
@@ -189,6 +190,7 @@ function cardClient(answer: () => Promise<GetAllowanceResponse>): ApiClient {
   return {
     listAllowances: () => Promise.reject(new Error('the card tests do not ask for the list')),
     getAllowance: answer,
+    getBlockhash: () => Promise.reject(new Error('the card tests do not build a transaction')),
   }
 }
 

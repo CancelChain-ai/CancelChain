@@ -37,6 +37,13 @@ function app(overrides: Partial<AppDeps> = {}) {
       cached: async () => null,
       settlementMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     },
+    blockhash: {
+      latestBlockhash: async () => ({
+        blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',
+        lastValidBlockHeight: 492_096_495n,
+        slot: SLOT,
+      }),
+    },
     ...overrides,
   })
 }

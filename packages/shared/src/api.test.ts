@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  latestBlockhashResponseSchema,
   listAllowancesQuerySchema,
   listAllowancesResponseSchema,
   listEventsQuerySchema,
@@ -150,5 +151,32 @@ describe('listAllowancesResponseSchema', () => {
   it('demands the unreadable list — "shown everything" has to be said, not assumed', () => {
     const body = { items: [], syncedAt: '2026-09-02T00:00:00.000Z', stale: false }
     expect(listAllowancesResponseSchema.safeParse(body).success).toBe(false)
+  })
+})
+
+describe('latestBlockhashResponseSchema', () => {
+  const BLOCKHASH = 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N'
+
+  it('takes the height as a decimal string', () => {
+    const parsed = latestBlockhashResponseSchema.parse({
+      blockhash: BLOCKHASH,
+      lastValidBlockHeight: '492096795',
+      slot: 492_096_495,
+    })
+    expect(BigInt(parsed.lastValidBlockHeight)).toBe(492_096_795n)
+  })
+
+  /**
+   * Числом ця межа мовчки округлює. Тут вона не мовчить: висота блоку живе на
+   * тому самому правилі, що й суми, і винятку «поки що влазить» у нього немає.
+   */
+  it('refuses a height that came as a number', () => {
+    const body = { blockhash: BLOCKHASH, lastValidBlockHeight: 492_096_795, slot: 1 }
+    expect(latestBlockhashResponseSchema.safeParse(body).success).toBe(false)
+  })
+
+  it('refuses a blockhash that is not base58', () => {
+    const body = { blockhash: 'not a blockhash', lastValidBlockHeight: '1', slot: 1 }
+    expect(latestBlockhashResponseSchema.safeParse(body).success).toBe(false)
   })
 })
