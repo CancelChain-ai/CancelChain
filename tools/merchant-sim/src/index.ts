@@ -1,3 +1,4 @@
+export * from './charge.js'
 export * from './config.js'
 export * from './keypair.js'
 export * from './merchant.js'

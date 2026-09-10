@@ -226,6 +226,9 @@ importers:
       '@cancelchain/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@solana-program/token':
+        specifier: 0.15.0
+        version: 0.15.0(@solana/kit@7.1.1(typescript@5.9.3))
       '@solana/kit':
         specifier: 'catalog:'
         version: 7.1.1(typescript@5.9.3)

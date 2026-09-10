@@ -19,6 +19,7 @@
   "dependencies": {
     "@cancelchain/chain": "workspace:*",
     "@cancelchain/shared": "workspace:*",
+    "@solana-program/token": "0.15.0",
     "@solana/kit": "catalog:",
     "@solana/subscriptions": "catalog:",
     "zod": "4.5.4"
