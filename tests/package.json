@@ -1,0 +1,23 @@
+{
+  "name": "@cancelchain/e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@cancelchain/chain": "workspace:*",
+    "@cancelchain/merchant-sim": "workspace:*",
+    "@cancelchain/shared": "workspace:*",
+    "@solana-program/token": "0.15.0",
+    "@solana/kit": "catalog:",
+    "@solana/subscriptions": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.11"
+  }
+}
