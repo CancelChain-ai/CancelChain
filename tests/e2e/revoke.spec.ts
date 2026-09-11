@@ -6,8 +6,10 @@ import {
   toBlockhash,
 } from '@cancelchain/chain'
 import {
+  attemptCharge,
   chargeTargetFromAllowance,
   createMerchantSim,
+  describeVerdict,
   loadMerchantSigner,
   type MerchantSim,
   resolveTokenProgram,
@@ -26,11 +28,19 @@ import { e2eConfigFromEnv } from './config.js'
  * `T028` — прогін на devnet: `SC-001` (після скасування 0 успішних списань на
  * ≥200 спроб) і `SC-004` (0 перевищень стелі за період на ≥200 спроб).
  *
- * ⚠️ **Два тести нижче залежать один від одного за станом мережі.** `SC-004`
- * міряє живий дозвіл, `SC-001` — той самий дозвіл після скасування, і порядок
- * зворотним бути не може: скасований дозвіл — це зниклий акаунт, у якого вже
- * немає ані стелі, ані періоду. Тому це один сценарій у двох кроках, а не два
- * незалежні тести, і саме тому вони живуть у `*.spec.ts`, а не в `*.test.ts`.
+ * ⚠️ **Три тести нижче залежать один від одного за станом мережі**, і порядок
+ * зворотним бути не може:
+ *
+ * 1. **контроль** — одне списання мусить пройти. Без нього нуль у `SC-001`
+ *    нічого не вартий: якщо на балансі власника немає токенів або мерчант не
+ *    той, спроби відхиляються й **без** жодного скасування, і «0 успішних із
+ *    200» доводить лише те, що ми не змогли списати взагалі;
+ * 2. `SC-004` — понад стелю, на живому дозволі;
+ * 3. `SC-001` — після скасування, коли акаунта вже немає (у скасованого немає
+ *    ані стелі, ані періоду, тож зворотний порядок неможливий).
+ *
+ * Тому це один сценарій у трьох кроках, а не три незалежні тести, і саме тому
+ * вони живуть у `*.spec.ts`, а не в `*.test.ts`.
  *
  * ⚠️ **Прогін витрачає справжні devnet-кошти й пише в мережу.** Без повного
  * оточення він **пропускається з названою причиною** — див. `config.ts`.
@@ -48,6 +58,13 @@ const CAMPAIGN_TIMEOUT_MS = 45 * 60_000
  * **за стелю**. Двісті відмов через відсутній токен-акаунт виглядали б так
  * само зелено й не міряли б нічого.
  */
+/**
+ * Чим мережа відмовляє після скасування. Не код програми, а помилка рантайму:
+ * закритий акаунт належить системній програмі, і Subscriptions відмовляється
+ * від нього ще до власних перевірок. Знято на devnet 2026-09-02.
+ */
+const REVOKED_ACCOUNT_ERROR = 'InvalidAccountOwner'
+
 const CAP_ERROR_CODES = new Set([
   String(SUBSCRIPTIONS_ERROR__AMOUNT_EXCEEDS_LIMIT),
   String(SUBSCRIPTIONS_ERROR__AMOUNT_EXCEEDS_PERIOD_LIMIT),
@@ -99,6 +116,30 @@ describe.skipIf(!configured)('T028 — SC-001 і SC-004 на devnet', () => {
     )
   }, 120_000)
 
+  it('контроль: одне списання проходить — інакше нуль після скасування порожній', async () => {
+    if (!setup.ready) return
+    const verdict = await attemptCharge(merchant.chain.rpc, {
+      allowance: chargeTargetFromAllowance(allowance),
+      amount: setup.config.chargeAmount,
+      merchant: merchant.signer,
+      tokenProgram,
+    })
+    process.stdout.write(`control charge:
+${describeVerdict(verdict)}
+
+`)
+    /*
+     * Саме `charged`, а не «не впало». Відмова тут означає, що вимірювати
+     * нічого: далі всі 200 спроб теж відхилилися б, і зелений `SC-001`
+     * говорив би про наш стенд, а не про протокол.
+     */
+    expect(
+      verdict.outcome,
+      'a live allowance must let one charge through before revocation is worth measuring; ' +
+        `the network said: ${describeVerdict(verdict)}`,
+    ).toBe('charged')
+  }, 120_000)
+
   it(
     'SC-004: понад стелю — 0 перевищень на ≥200 спроб',
     async () => {
@@ -112,16 +153,24 @@ describe.skipIf(!configured)('T028 — SC-001 і SC-004 на devnet', () => {
        * Для `fixed` «витрачено» мережа не зберігає (`decode.ts`), тож там
        * `capAmount` — це і є залишок.
        */
+      /*
+       * Перечитуємо: контрольне списання щойно зрушило `spentInPeriod`, і
+       * рахувати залишок від того, що було до нього, означало б пробувати не
+       * межу, а число з минулого.
+       */
+      const live = await readTarget()
+      expect(live, 'the allowance must still exist before the over-cap run').not.toBeNull()
+      if (live === null) return
       const remaining =
-        allowance.kind === 'fixed'
-          ? BigInt(allowance.capAmount)
-          : BigInt(allowance.capAmount) - BigInt(allowance.spentInPeriod)
+        live.kind === 'fixed'
+          ? BigInt(live.capAmount)
+          : BigInt(live.capAmount) - BigInt(live.spentInPeriod)
       const overCap = remaining + 1n
 
       const tally = await runCampaign(
         merchant.chain.rpc,
         {
-          allowance: chargeTargetFromAllowance(allowance),
+          allowance: chargeTargetFromAllowance(live),
           amount: overCap,
           merchant: merchant.signer,
           tokenProgram,
@@ -159,7 +208,7 @@ describe.skipIf(!configured)('T028 — SC-001 і SC-004 на devnet', () => {
       expect(after, 'the allowance must still exist after the over-cap run').not.toBeNull()
       if (after === null) return
       expect(BigInt(after.spentInPeriod)).toBeLessThanOrEqual(BigInt(after.capAmount))
-      expect(after.spentInPeriod).toBe(allowance.spentInPeriod)
+      expect(after.spentInPeriod).toBe(live.spentInPeriod)
     },
     CAMPAIGN_TIMEOUT_MS,
   )
@@ -213,6 +262,18 @@ describe.skipIf(!configured)('T028 — SC-001 і SC-004 на devnet', () => {
       expect(tally.judged, 'attempts the network actually judged').toBeGreaterThanOrEqual(
         config.attempts,
       )
+      /*
+       * Відмова мусить бути **саме про закритий акаунт**. Після скасування
+       * акаунт дозволу належить системній програмі, і транзакція падає як
+       * `InvalidAccountOwner` — помилкою рантайму, не кодом програми (знято на
+       * devnet 2026-09-02). Інша причина означала б, що двісті спроб відхилилися
+       * зі стороннього приводу, а `FR-004` — «відхиляється на рівні протоколу» —
+       * лишився б недоведеним.
+       */
+      expect(
+        tally.codes[REVOKED_ACCOUNT_ERROR],
+        `rejections naming the closed account; observed: ${JSON.stringify(tally.codes)}`,
+      ).toBe(tally.rejected)
     },
     CAMPAIGN_TIMEOUT_MS,
   )

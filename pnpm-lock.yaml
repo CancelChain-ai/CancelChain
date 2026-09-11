@@ -229,6 +229,9 @@ importers:
       '@cancelchain/shared':
         specifier: workspace:*
         version: link:../packages/shared
+      '@solana-program/system':
+        specifier: 0.13.0
+        version: 0.13.0(@solana/kit@7.1.1(typescript@5.9.3))
       '@solana-program/token':
         specifier: 0.15.0
         version: 0.15.0(@solana/kit@7.1.1(typescript@5.9.3))
@@ -242,6 +245,9 @@ importers:
       '@types/node':
         specifier: 22.20.1
         version: 22.20.1
+      tsx:
+        specifier: 4.23.13
+        version: 4.23.13
       typescript:
         specifier: 5.9.3
         version: 5.9.3

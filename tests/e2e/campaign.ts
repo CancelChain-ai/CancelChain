@@ -4,6 +4,7 @@ import {
   type ChargeInput,
   type ChargeRpc,
   type ChargeVerdict,
+  rejectionReasonKey,
 } from '@cancelchain/merchant-sim'
 
 /**
@@ -32,7 +33,11 @@ export type CampaignTally = {
   noAttempt: number
   /** Скільки разів узагалі зверталися до мережі. */
   sends: number
-  /** Код помилки програми → скільки разів. `none` — відмова не від програми. */
+  /**
+   * Причина відмови → скільки разів. Ключ — код програми (`400`), назва
+   * помилки рантайму (`InvalidAccountOwner`) або `other`. Не «none»: різниця
+   * між «програма сказала 400» і «акаунта більше немає» — це і є вимір.
+   */
   codes: Record<string, number>
   /** Підписи успішних списань. За `SC-001` цей масив мусить лишитися порожнім. */
   chargedSignatures: string[]
@@ -82,8 +87,8 @@ function emptyTally(): CampaignTally {
   }
 }
 
-function countCode(tally: CampaignTally, code: number | null): void {
-  const key = code === null ? 'none' : String(code)
+function countReason(tally: CampaignTally, error: unknown): void {
+  const key = rejectionReasonKey(error)
   tally.codes[key] = (tally.codes[key] ?? 0) + 1
 }
 
@@ -118,7 +123,7 @@ export async function runCampaign(
       case 'rejected':
         tally.judged += 1
         tally.rejected += 1
-        countCode(tally, verdict.programErrorCode)
+        countReason(tally, verdict.error)
         tally.sampleRejectedSignature ??= verdict.signature
         break
       case 'unknown':

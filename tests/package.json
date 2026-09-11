@@ -4,19 +4,22 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run"
+    "seed": "tsx fixtures/seed.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@cancelchain/chain": "workspace:*",
     "@cancelchain/merchant-sim": "workspace:*",
     "@cancelchain/shared": "workspace:*",
+    "@solana-program/system": "0.13.0",
     "@solana-program/token": "0.15.0",
     "@solana/kit": "catalog:",
     "@solana/subscriptions": "catalog:"
   },
   "devDependencies": {
     "@types/node": "22.20.1",
+    "tsx": "4.23.13",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
   }

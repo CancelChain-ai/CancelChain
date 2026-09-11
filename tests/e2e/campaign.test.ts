@@ -129,11 +129,14 @@ describe('рахунок спроб', () => {
     expect(tally.charged).toBe(3)
   })
 
-  it('коди помилок програми рахуються поіменно', async () => {
+  it('причини відмов рахуються поіменно — і рантаймова теж має назву', async () => {
     const tally = await run([{ rejected: 300 }, { rejected: 300 }, { rejected: null }], {
       attempts: 3,
     })
-    expect(tally.codes).toEqual({ '300': 2, none: 1 })
+    // 'AccountInUse' — рантаймова відмова: у звіті вона мусить бути названа, а
+    // не зведена до «немає коду», інакше «акаунта більше немає» і «щось інше»
+    // виглядають однаково.
+    expect(tally.codes).toEqual({ '300': 2, AccountInUse: 1 })
     expect(tally.sampleRejectedSignature).not.toBeNull()
   })
 })
