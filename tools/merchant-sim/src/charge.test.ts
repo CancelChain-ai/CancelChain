@@ -40,7 +40,9 @@ import {
   describeVerdict,
   type MintOwnerRpc,
   programErrorCodeOf,
+  rejectionReasonKey,
   resolveTokenProgram,
+  runtimeErrorLabelOf,
 } from './charge.js'
 
 const PDA = '6Y7s52pnmsnxT4jQTXpgvJ9kZvM4Me3VMUUUhogq8imH' as Address
@@ -359,6 +361,16 @@ describe('programErrorCodeOf', () => {
     expect(programErrorCodeOf({ InstructionError: [0, { Custom: 130 }] })).toBe(130)
   })
 
+  it('kit віддає код як bigint — і саме так він приходить із devnet', () => {
+    // Форма, знята зі справжньої відповіді вузла 2026-09-02: обидва числа bigint.
+    expect(programErrorCodeOf({ InstructionError: [0n, { Custom: 400n }] })).toBe(400)
+  })
+
+  it('код, що не влазить у число, не обрізається мовчки', () => {
+    expect(programErrorCodeOf({ InstructionError: [0n, { Custom: -1n }] })).toBeNull()
+    expect(programErrorCodeOf({ InstructionError: [0n, { Custom: 2n ** 64n }] })).toBeNull()
+  })
+
   it('відмова не від програми коду не має', () => {
     expect(programErrorCodeOf({ InstructionError: [0, 'ProgramFailedToComplete'] })).toBeNull()
     expect(programErrorCodeOf('AccountNotFound')).toBeNull()
@@ -503,16 +515,40 @@ describe('attemptCharge — вердикт дає мережа', () => {
   })
 })
 
+describe('runtimeErrorLabelOf і rejectionReasonKey', () => {
+  it('відмова рантайму має назву, а не «немає коду»', () => {
+    // Форма зі справжнього прогону: після скасування акаунт належить системній
+    // програмі, і мережа відповідає рядком, а не числом.
+    const closed = { InstructionError: [0n, 'InvalidAccountOwner'] }
+    expect(runtimeErrorLabelOf(closed)).toBe('InvalidAccountOwner')
+    expect(rejectionReasonKey(closed)).toBe('InvalidAccountOwner')
+    expect(programErrorCodeOf(closed)).toBeNull()
+  })
+
+  it('код програми лишається кодом', () => {
+    expect(rejectionReasonKey({ InstructionError: [0n, { Custom: 400n }] })).toBe('400')
+  })
+
+  it('нерозпізнана форма називається «other», а не вигаданим кодом', () => {
+    expect(rejectionReasonKey({ InstructionError: [0n, { Weird: 1 }] })).toBe('other')
+    expect(runtimeErrorLabelOf('AccountInUse')).toBe('AccountInUse')
+  })
+})
+
 describe('describeVerdict', () => {
   it('відмову без коду програми називає прямо, а не «невідома причина»', () => {
     const text = describeVerdict({
-      error: 'AccountInUse',
+      error: { InstructionError: [0n, 'InvalidAccountOwner'] },
       outcome: 'rejected',
       programErrorCode: null,
       signature: 'sig' as Signature,
       slot: 1n,
     })
+    expect(text).toContain('InvalidAccountOwner')
     expect(text).toContain('the runtime refused it, not the program')
+    // Помилка мережі несе bigint, а JSON.stringify на ньому кидає: друк
+    // відмови не має права валити команду.
+    expect(text).toContain('"InvalidAccountOwner"')
   })
 
   it('відсутню спробу не показує успіхом', () => {

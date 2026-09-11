@@ -347,6 +347,14 @@ export async function buildChargeTransaction(
  * одиниці обчислення) — і це не те саме, що «невідома причина»: перекладом
  * кодів у названі категорії займається `T040`, і вигадувати категорію тут
  * означало б завести другий, розбіжний перелік.
+ *
+ * ⚠️ **Код приходить `bigint`, а не `number`.** kit підіймає цілі числа у
+ * відповідях RPC до `bigint`, тож мережа віддає `{ Custom: 400n }`, і індекс
+ * інструкції теж `0n`. Перевірка `typeof === 'number'` мовчки викидала б **кожен**
+ * код, а у звіті це виглядало б як «відмова не від програми» — тобто як
+ * властивість мережі, а не як наша помилка розбору. Перевірено на devnet
+ * 2026-09-02: перший прогін `T028` дав рівно таку картину (`none×200` при
+ * фактичному `Custom: 400`).
  */
 export function programErrorCodeOf(error: unknown): number | null {
   if (typeof error !== 'object' || error === null || !('InstructionError' in error)) return null
@@ -355,7 +363,40 @@ export function programErrorCodeOf(error: unknown): number | null {
   const detail: unknown = pair[1]
   if (typeof detail !== 'object' || detail === null || !('Custom' in detail)) return null
   const code: unknown = (detail as { Custom: unknown }).Custom
-  return typeof code === 'number' ? code : null
+  if (typeof code === 'number') return Number.isInteger(code) ? code : null
+  if (typeof code !== 'bigint') return null
+  // Коди програми — маленькі числа; межа тут не про них, а про те, щоб не
+  // повернути мовчки обрізане значення.
+  return code >= 0n && code <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(code) : null
+}
+
+/**
+ * Назва помилки рантайму — те, чим мережа відмовляє **без** коду програми.
+ *
+ * Потрібна тому, що найважливіша для нас відмова саме така: після скасування
+ * акаунт дозволу закритий, отже належить системній програмі, і транзакція
+ * падає як `InvalidAccountOwner` — рядком, не числом. Перевірено на devnet
+ * 2026-09-02 (`T028`). Звести це до «немає коду» означало б у звіті сховати
+ * єдину причину, заради якої весь `SC-001` і міряється.
+ */
+export function runtimeErrorLabelOf(error: unknown): string | null {
+  if (typeof error === 'string') return error
+  if (typeof error !== 'object' || error === null || !('InstructionError' in error)) return null
+  const pair = (error as { InstructionError: unknown }).InstructionError
+  if (!Array.isArray(pair) || pair.length !== 2) return null
+  const detail: unknown = pair[1]
+  return typeof detail === 'string' ? detail : null
+}
+
+/**
+ * Причина відмови одним рядком: код програми, назва помилки рантайму або
+ * `other`. Саме це йде у звіт прогону — «none» ховало б різницю між «програма
+ * сказала 400» і «акаунта більше немає».
+ */
+export function rejectionReasonKey(error: unknown): string {
+  const code = programErrorCodeOf(error)
+  if (code !== null) return String(code)
+  return runtimeErrorLabelOf(error) ?? 'other'
 }
 
 type SignatureStatus = {
@@ -566,6 +607,19 @@ export async function attemptCharge(
   }
 }
 
+/**
+ * Помилка мережі рядком.
+ *
+ * `JSON.stringify` **кидає** на `BigInt`, а мережа саме його й повертає (kit
+ * підіймає цілі в bigint), тож без цього заміщувача друк відмови валив би
+ * команду рівно тоді, коли їй є що сказати. Знайдено тестом, не на devnet.
+ */
+function stringifyError(error: unknown): string {
+  return JSON.stringify(error, (_key, value: unknown) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  )
+}
+
 /** Рядок вердикту для CLI. Каже, що саме сталося, і ніколи не більше. */
 export function describeVerdict(verdict: ChargeVerdict): string {
   switch (verdict.outcome) {
@@ -574,13 +628,13 @@ export function describeVerdict(verdict: ChargeVerdict): string {
     case 'rejected': {
       const code =
         verdict.programErrorCode === null
-          ? 'not a program error code (the runtime refused it, not the program)'
+          ? `${runtimeErrorLabelOf(verdict.error) ?? 'unrecognised'} — the runtime refused it, not the program`
           : `program error ${verdict.programErrorCode}`
       return [
         `REJECTED      slot ${verdict.slot}`,
         `signature:    ${verdict.signature}`,
         `reason:       ${code}`,
-        `raw error:    ${JSON.stringify(verdict.error)}`,
+        `raw error:    ${stringifyError(verdict.error)}`,
       ].join('\n')
     }
     case 'unknown':
