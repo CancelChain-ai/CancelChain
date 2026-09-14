@@ -1,6 +1,6 @@
-import type { CancelControls } from '../chain/revoke'
+import type { CancelControls, CancelState } from '../chain/revoke'
 import { stepLabel } from '../chain/revoke'
-import AllowanceCard, { type CancelNotice } from '../components/AllowanceCard'
+import AllowanceCard, { type CancelNotice, NOTICE_STYLES } from '../components/AllowanceCard'
 import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
 import {
@@ -15,7 +15,7 @@ import {
 /**
  * Екран списку — `FR-001`, `FR-002`.
  *
- * Три речі, які цей екран не має права зробити:
+ * Чотири речі, яких цей екран не має права зробити:
  *
  * 1. **Показати порожнє місце замість невдачі.** «Дозволів немає» і «не змогли
  *    прочитати» виглядають однаково лише доти, доки цього не зробити навмисно:
@@ -27,6 +27,11 @@ import {
  * 3. **Скласти різні активи в одне число.** Сума в шапці — тільки розрахунковий
  *    актив; дозвіл у чужому міні лишається в списку й каже про себе сам
  *    (`FR-020`).
+ * 4. **Намалювати скасований дозвіл.** Скасування закриває акаунт, тож із
+ *    мережі він приходить не «скасованим», а ніяким: список перечитується і
+ *    коротшає. Картка-надгробок тут була б станом нашого власного винаходу
+ *    над станом мережі, тобто розбіжністю, яку ми ж обіцяємо показувати
+ *    (`Departed`).
  */
 
 interface SubscriptionsProps {
@@ -184,6 +189,161 @@ const Unreadable = ({ list }: { list: AllowanceList }) => {
   )
 }
 
+/**
+ * Що сталося з дозволом, якого в списку **вже немає** — `FR-022`.
+ *
+ * Скасований дозвіл не стає карткою з міткою: він стає **зниклим акаунтом**.
+ * Програма закриває акаунт, наступне читання гаманця його вже не бачить, і
+ * список просто коротшає. Своєї мітки «Cancelled» ми над цим не малюємо
+ * (рішення `T026`): намальована нами картка над закритим акаунтом і була б
+ * розбіжністю зі станом мережі — тією самою, яку продукт обіцяє показувати, а
+ * не створювати.
+ *
+ * Але разом із карткою зникає й підсумок потоку, а в ньому єдине, що людина
+ * може віднести в оглядач, — підпис транзакції. Тому підсумок переживає картку
+ * тут, на рівні списку, і каже рівно те, що ми знаємо: дозволу немає в списку,
+ * прочитаному о такій-то годині.
+ */
+type FinishedCancel = Exclude<CancelState, { status: 'idle' } | { status: 'working' }>
+
+function departedNotice(state: FinishedCancel, readAt: string): CancelNotice {
+  switch (state.status) {
+    case 'gone':
+      return {
+        tone: 'good',
+        text:
+          'This permission was already gone before anything was signed. Nothing was sent, and ' +
+          `it is not in the list read at ${readAt}.`,
+      }
+    case 'done':
+      return {
+        tone: 'good',
+        text:
+          'Cancelled. The permission account no longer exists on the network — the next charge ' +
+          `has nothing to charge against, so it is gone from the list read at ${readAt} instead ` +
+          `of sitting in it marked cancelled. Transaction ${state.signature}.`,
+      }
+    case 'unconfirmed':
+      /*
+       * Тут «невідомо» вже скінчилося. Ми перестали чекати, поки акаунт був на
+       * місці, — а список, прочитаний після того, його не бачить. Це та сама
+       * перевірка, якою підтверджується скасування, тільки пізніше.
+       */
+      return {
+        tone: 'good',
+        text:
+          `Your wallet reported transaction ${state.signature}, and we stopped waiting before ` +
+          `the network dropped the permission. It is not in the list read at ${readAt} — the ` +
+          'account is gone after all.',
+      }
+    case 'failed':
+      return {
+        tone: 'warn',
+        text:
+          `${state.message} The permission is also not in the list read at ${readAt}: either it ` +
+          'was already gone, or the transaction landed anyway. Its absence is what the network ' +
+          'says, not a state we set.',
+      }
+  }
+}
+
+const Departed = ({
+  state,
+  list,
+  onDismiss,
+}: {
+  state: CancelControls['state']
+  list: AllowanceList
+  onDismiss: () => void
+}) => {
+  // Картка на місці — підсумок належить їй, а не списку.
+  if (!('id' in state) || list.items.some((view) => view.id === state.id)) return null
+  const readAt = formatClock(new Date(list.syncedAt))
+
+  if (state.status === 'working') {
+    // Картка зникла посеред потоку (перечитка на поверненні у вкладку). Мовчати
+    // тут не можна: підпис уже може бути в гаманці.
+    return (
+      <p className="mt-8 max-w-[640px] rounded-md border border-hairline p-4 text-[13px] leading-relaxed text-ink/80">
+        {stepLabel(state.step)} Its card is no longer in the list read at {readAt}.
+      </p>
+    )
+  }
+
+  const notice = departedNotice(state, readAt)
+  return (
+    <div
+      className={`mt-8 max-w-[640px] rounded-md border p-4 text-[13px] leading-relaxed ${NOTICE_STYLES[notice.tone]}`}
+    >
+      <p>{notice.text}</p>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="mt-3 text-[12px] text-ink/55 underline underline-offset-4"
+      >
+        Dismiss
+      </button>
+    </div>
+  )
+}
+
+/**
+ * Порожній список — це **твердження про гаманець**, а не відсутність вмісту, і
+ * правдиве воно не завжди (`FR-022`, `FR-006`).
+ *
+ * «Ніхто не може списати» можна сказати рівно тоді, коли ми прочитали все і
+ * щойно. Якщо частину акаунтів прочитати не вдалося, порожній екран приховує
+ * саме те, чого людина боїться; якщо перечитка впала або копія несвіжа — це
+ * відповідь про минуле, видана за теперішнє.
+ */
+const EmptyList = ({
+  list,
+  refreshFailed,
+}: {
+  list: AllowanceList
+  refreshFailed: string | null
+}) => {
+  const readAt = formatClock(new Date(list.syncedAt))
+
+  if (list.unreadable.length > 0) {
+    const count = list.unreadable.length
+    return (
+      <Notice>
+        Not one account in this wallet became a card, and{' '}
+        {count === 1 ? 'one of them' : `${count} of them`} could not be read at all. Empty here is
+        not the same as safe: what could not be read is named below, and any of it may still be able
+        to charge this wallet.
+      </Notice>
+    )
+  }
+
+  if (refreshFailed !== null) {
+    return (
+      <Notice>
+        Nothing was in this wallet at {readAt} — and the latest re-read failed, so that is what the
+        network said then, not what it says now.
+      </Notice>
+    )
+  }
+
+  if (list.stale) {
+    return (
+      <Notice>
+        Nothing is in this stored copy, and it is older than we are willing to vouch for. Until it
+        is re-read, this is not an answer about what can charge this wallet.
+      </Notice>
+    )
+  }
+
+  return (
+    <Notice>
+      No one can charge this wallet. Nothing here means nothing is running — not that we failed to
+      load anything. A cancelled permission leaves nothing behind either: its account is closed, so
+      it disappears from this list instead of sitting in it marked cancelled.
+    </Notice>
+  )
+}
+
 const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, cancel }: SubscriptionsProps) => {
   if (state.status === 'no-wallet') {
     return (
@@ -233,11 +393,12 @@ const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, cancel }: Subscr
         </p>
       )}
 
+      {cancel !== undefined && (
+        <Departed state={cancel.state} list={list} onDismiss={cancel.dismiss} />
+      )}
+
       {items.length === 0 ? (
-        <Notice>
-          No one can charge this wallet. Nothing here means nothing is running — not that we failed
-          to load anything.
-        </Notice>
+        <EmptyList list={list} refreshFailed={state.refreshFailed} />
       ) : (
         <div className="mt-10 grid grid-cols-1 gap-5 lg:grid-cols-2">
           {items.map((view) => (

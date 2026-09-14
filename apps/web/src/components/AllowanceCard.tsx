@@ -42,7 +42,7 @@ interface AllowanceCardProps {
 /** Тон підсумку. `warn` — саме «невідомо», а не пом'якшена невдача. */
 export type CancelNotice = { tone: 'good' | 'warn' | 'bad'; text: string }
 
-const NOTICE_STYLES: Record<CancelNotice['tone'], string> = {
+export const NOTICE_STYLES: Record<CancelNotice['tone'], string> = {
   good: 'border-ink/30 text-ink/80',
   warn: 'border-amber text-amber',
   bad: 'border-rust text-rust',

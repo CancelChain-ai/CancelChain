@@ -283,8 +283,20 @@ describe('a card of real data', () => {
     expect(screen.queryByRole('img')).toBeNull()
   })
 
-  it('shows a cancelled allowance as cancelled', () => {
-    show(ready({ items: [viewFromAllowance(listed({ status: 'revoked' }))] }))
+  it('shows a cancelled allowance as cancelled — only where no network stands behind the list', () => {
+    /*
+     * Картка-надгробок належить демо M0, і `onNetwork={false}` тут не деталь
+     * рендера: з мережі скасований дозвіл не приходить узагалі (акаунт
+     * закритий, `deriveStatus` такого статусу не видає), і намальована нами
+     * мітка над справжнім списком була б розбіжністю з мережею (`T029`).
+     */
+    render(
+      <Subscriptions
+        state={ready({ items: [viewFromAllowance(listed({ status: 'revoked' }))] })}
+        walletLabel={null}
+        onNetwork={false}
+      />,
+    )
     expect(screen.getByText('Cancelled')).toBeDefined()
     expect(screen.getByText(/No further charges can be made/i)).toBeDefined()
   })
@@ -423,5 +435,107 @@ describe('cancelling from the list', () => {
     )
     expect(screen.getByText(/This wallet cannot sign/i)).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+  })
+})
+
+/**
+ * `T029` — дозвіл, якого в списку вже немає (`FR-022`).
+ *
+ * Скасування закриває акаунт, тож наступне читання гаманця його не бачить і
+ * картка зникає. Перевіряється тут одне: разом із карткою не зникає відповідь
+ * на питання «то що сталося?» — і що надгробка з міткою «Cancelled» на її
+ * місці не з'являється.
+ */
+describe('a permission that is gone from the list', () => {
+  function withState(state: CancelState, listState: AllowancesState = ready()) {
+    render(
+      <Subscriptions
+        state={listState}
+        walletLabel="4DYh…Jj96"
+        onNetwork={true}
+        cancel={{ state, cancel: () => {}, unavailable: null, dismiss: () => {} }}
+      />,
+    )
+  }
+
+  it('keeps the confirmation, and the signature, after the card disappears', () => {
+    withState({ status: 'done', id: OTHER_PDA, signature: 'abc123' })
+    const text = screen.getByText(/no longer exists on the network/i).textContent ?? ''
+    expect(text).toMatch(/abc123/)
+    expect(text).toMatch(/gone from the list read at/i)
+  })
+
+  it('draws no cancelled card in place of the account that is gone', () => {
+    // Рішення `T026`: скасований дозвіл — це зниклий акаунт, а не картка з
+    // міткою. Намальована нами мітка й була б розбіжністю з мережею.
+    withState({ status: 'done', id: OTHER_PDA, signature: 'abc123' }, ready({ items: [] }))
+    expect(screen.queryByText('Cancelled')).toBeNull()
+    expect(screen.queryByText(/No further charges can be made/i)).toBeNull()
+    expect(screen.getByText(/No one can charge this wallet/i)).toBeDefined()
+  })
+
+  it('says nothing at list level while the card is still there', () => {
+    withState({ status: 'done', id: PDA, signature: 'abc123' })
+    expect(screen.getAllByText(/no longer exists on the network/i)).toHaveLength(1)
+    expect(screen.queryByText(/gone from the list read at/i)).toBeNull()
+  })
+
+  it('treats an absence as the confirmation the wallet never gave us', () => {
+    // Ми перестали чекати, поки акаунт був на місці. Список, прочитаний після
+    // того, його не бачить — це та сама перевірка, тільки пізніше.
+    withState({ status: 'unconfirmed', id: OTHER_PDA, signature: 'abc123' })
+    const text = screen.getByText(/stopped waiting/i).textContent ?? ''
+    expect(text).toMatch(/the account is gone after all/i)
+    expect(text).not.toMatch(/this is not a confirmation/i)
+  })
+
+  it('does not turn a failed cancel into a success just because the account is gone', () => {
+    withState({ status: 'failed', id: OTHER_PDA, message: 'You declined the signature.' })
+    const text = screen.getByText(/You declined the signature/i).textContent ?? ''
+    expect(text).toMatch(/either it was already gone, or the transaction landed anyway/i)
+  })
+
+  it('does not go silent when the card disappears mid-flow', () => {
+    withState({ status: 'working', id: OTHER_PDA, step: 'signing' })
+    expect(screen.getByText(/waiting for your wallet to sign/i)).toBeDefined()
+  })
+})
+
+/**
+ * `T029` — порожньо як твердження (`FR-022`, `FR-006`).
+ *
+ * «Ніхто не може списати» можна сказати рівно тоді, коли прочитано все і
+ * щойно. У решті випадків порожній екран — відповідь про минуле або про
+ * частину гаманця, видана за відповідь про весь.
+ */
+describe('what an empty list is allowed to claim', () => {
+  it('explains that a cancelled permission simply is not here', () => {
+    show(ready({ items: [] }))
+    expect(screen.getByText(/instead of sitting in it marked cancelled/i)).toBeDefined()
+  })
+
+  it('does not call an empty list safe while accounts could not be read', () => {
+    show(ready({ items: [], unreadable: [{ address: OTHER_PDA, reason: 'version' }] }))
+    expect(screen.queryByText(/No one can charge this wallet/i)).toBeNull()
+    expect(screen.getByText(/Empty here is not the same as safe/i)).toBeDefined()
+    // І сам акаунт названий, а не полічений.
+    expect(screen.getByText(OTHER_PDA)).toBeDefined()
+  })
+
+  it('does not present a failed re-read as an empty wallet', () => {
+    show({
+      status: 'ready',
+      list: list({ items: [] }),
+      refreshing: false,
+      refreshFailed: 'could not reach CancelChain',
+    })
+    expect(screen.queryByText(/No one can charge this wallet/i)).toBeNull()
+    expect(screen.getByText(/not what it says now/i)).toBeDefined()
+  })
+
+  it('does not present a stale copy as an empty wallet', () => {
+    show(ready({ items: [], stale: true }))
+    expect(screen.queryByText(/No one can charge this wallet/i)).toBeNull()
+    expect(screen.getByText(/not an answer about what can charge this wallet/i)).toBeDefined()
   })
 })
