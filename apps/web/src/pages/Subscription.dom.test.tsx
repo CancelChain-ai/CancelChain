@@ -4,6 +4,8 @@ import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PERMISSIONS } from '../lib/mockData'
 import type { AllowanceState } from '../lib/useAllowance'
+import type { HistoryState } from '../lib/useHistory'
+import type { AddressHistoryView } from '../lib/view'
 import { detailFromAllowance, detailFromPermission } from '../lib/view'
 import Subscription from './Subscription'
 
@@ -292,5 +294,103 @@ describe('actions', () => {
     show(subscription())
     expect(screen.getAllByRole('button')).toHaveLength(1)
     expect(screen.getByRole('button', { name: /My subscriptions/ })).toBeTruthy()
+  })
+})
+
+/**
+ * Мінімальна стрічка на вимогу — `T030`, `FR-005`.
+ *
+ * Перевіряється не таблиця, а межа обіцянки: екран каже, що транзакція
+ * торкнулася адреси, і не каже, що вона зробила; невдача стрічки лишається
+ * невдачею стрічки й не забирає з екрана п'ять полів `FR-002`.
+ */
+describe('the feed of one address', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+
+  function history(over: Partial<AddressHistoryView> = {}): HistoryState {
+    return {
+      status: 'ready',
+      history: {
+        rows: [{ signature: SIGNATURE, slot: 400_000_001, when: new Date(NOW), failed: false }],
+        syncedAt: new Date(NOW),
+        more: false,
+        ...over,
+      },
+    }
+  }
+
+  function withHistory(state: HistoryState, explorer?: (signature: string) => string | null) {
+    render(
+      <Subscription state={ready()} onBack={() => {}} history={state} explorerUrl={explorer} />,
+    )
+  }
+
+  it('says the network accepted or refused, and nothing about what it did', () => {
+    withHistory(
+      history({
+        rows: [
+          { signature: SIGNATURE, slot: 400_000_002, when: new Date(NOW), failed: true },
+          {
+            signature: `${SIGNATURE.slice(0, 87)}z`,
+            slot: 400_000_001,
+            when: new Date(NOW),
+            failed: false,
+          },
+        ],
+      }),
+    )
+    expect(screen.getByText('The network refused it')).toBeTruthy()
+    expect(screen.getByText('The network accepted it')).toBeTruthy()
+    // Ані суми, ані причини: з `getSignaturesForAddress` їх не видно, і екран
+    // каже це словами, а не малює порожню колонку під суму.
+    expect(screen.getByText(/What each one did is not read here/i)).toBeTruthy()
+    expect(screen.queryByText(/cap_exceeded|Custom/i)).toBeNull()
+  })
+
+  it('says this is the history of an address, which outlives one permission', () => {
+    withHistory(history())
+    expect(screen.getByText(/may belong to a permission that no longer exists/i)).toBeTruthy()
+  })
+
+  it('links a signature to the explorer of the network it was read from', () => {
+    withHistory(history(), (signature) => `https://explorer.example/tx/${signature}`)
+    const link = screen.getByRole('link')
+    expect(link.getAttribute('href')).toBe(`https://explorer.example/tx/${SIGNATURE}`)
+  })
+
+  it('shows the signature without a link when the network has no explorer', () => {
+    withHistory(history(), () => null)
+    expect(screen.queryByRole('link')).toBeNull()
+    expect(screen.getByText(/^5wHu…yRxk$/)).toBeTruthy()
+  })
+
+  it('names the cut instead of passing a window off as the whole history', () => {
+    withHistory(history({ more: true }))
+    expect(screen.getByText(/the address has older ones/i)).toBeTruthy()
+  })
+
+  it('an empty history is an answer, not a feed that failed to load', () => {
+    withHistory(history({ rows: [] }))
+    expect(screen.getByText(/No transaction has touched this address/i)).toBeTruthy()
+  })
+
+  it('keeps the five fields on screen when the feed fails', () => {
+    // Невдача стрічки — невдача стрічки. `SC-005` міряє картку, і вона читається
+    // іншим запитом.
+    withHistory({ status: 'error', message: 'CancelChain could not read the history.' })
+    expect(screen.getByText('CancelChain could not read the history.')).toBeTruthy()
+    expect(screen.getByText('Recipient')).toBeTruthy()
+    expect(screen.getByText('Next charge')).toBeTruthy()
+  })
+
+  it('says it is reading, which is not the same as nothing having happened', () => {
+    withHistory({ status: 'loading' })
+    expect(screen.getByText(/Reading the transactions that touched/i)).toBeTruthy()
+  })
+
+  it('says it does not fetch a feed when there is no source for one', () => {
+    withHistory({ status: 'unavailable' })
+    expect(screen.getByText(/a feed we do not fetch/i)).toBeTruthy()
   })
 })

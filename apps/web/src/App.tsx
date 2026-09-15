@@ -2,11 +2,12 @@ import { useState } from 'react'
 import { CancelFlow } from './chain/revoke'
 import { WalletMenu } from './chain/WalletMenu'
 import { useWalletEnvironment } from './chain/WalletProvider'
-import { shortenAddress, useWalletOwner } from './chain/wallet'
+import { explorerTxUrl, shortenAddress, useWalletOwner } from './chain/wallet'
 import { type Permission, SUBSCRIBE_GRANT, WALLET } from './lib/mockData'
 import { mockData, source } from './lib/source'
 import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
+import { useHistory } from './lib/useHistory'
 import Merchant from './pages/Merchant'
 import Subscribe from './pages/Subscribe'
 import Subscription from './pages/Subscription'
@@ -46,6 +47,11 @@ const App = () => {
   const owner = useWalletOwner()
   const allowances = useAllowances(owner, mockRevision)
   const allowance = useAllowance(selectedId, mockRevision)
+  /**
+   * Стрічка картки (`T030`) — окремим запитом від самої картки: історія має
+   * право не доїхати, не забравши з собою п'ять полів `FR-002`.
+   */
+  const history = useHistory(selectedId)
 
   const update = (id: string, change: (permission: Permission) => Permission) => {
     mockData.update(id, change)
@@ -192,6 +198,10 @@ const App = () => {
             <Subscription
               state={allowance}
               onBack={() => setView('subscriptions')}
+              history={history}
+              // Мережу знає оточення гаманця, а не екран картки: посилання
+              // будується тут і приходить туди готовим.
+              explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
               {...demoActions}
             />
           ))}

@@ -12,6 +12,7 @@ import {
   createWalletFilter,
   createWalletStateSync,
   DEFAULT_CLUSTER,
+  explorerTxUrl,
   SELECTED_WALLET_STORAGE_KEY,
   shortenAddress,
   walletAccountAddress,
@@ -202,5 +203,27 @@ describe('createWalletStateSync', () => {
     const sync = createWalletStateSync(null)
     expect(sync.getSelectedWallet()).toBeNull()
     expect(() => sync.storeSelectedWallet('x')).not.toThrow()
+  })
+})
+
+/** Посилання на транзакцію — `T030`. */
+describe('explorerTxUrl', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+
+  it('names the cluster, because the same signature means nothing on another one', () => {
+    expect(explorerTxUrl(SIGNATURE, 'devnet')).toBe(
+      `https://explorer.solana.com/tx/${SIGNATURE}?cluster=devnet`,
+    )
+  })
+
+  it('has no link for a local validator instead of one that opens nothing', () => {
+    expect(explorerTxUrl(SIGNATURE, 'localnet')).toBeNull()
+  })
+
+  it('does not ask the explorer for a cluster it defaults to', () => {
+    expect(explorerTxUrl(SIGNATURE, 'mainnet-beta')).toBe(
+      `https://explorer.solana.com/tx/${SIGNATURE}`,
+    )
   })
 })

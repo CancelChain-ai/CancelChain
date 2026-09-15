@@ -373,7 +373,50 @@ export function exhaustedSentence(view: AllowanceView): string {
  */
 export type NetworkState = 'read' | 'absent' | 'none'
 
-/** Рядок стрічки подій. До `T030` її дає лише мок. */
+/**
+ * Транзакція, що торкнулася адреси дозволу — `T030`, модель показу для
+ * мінімальної стрічки (`FR-005`).
+ *
+ * Це **не** `ActivityRow`. Там подія: що зробили і на скільки. Тут — рівно те,
+ * що каже `getSignaturesForAddress`: підпис, коли, і чи мережа її прийняла.
+ * Суми немає не тому, що вона нуль, а тому, що для неї треба розбирати логи
+ * програми — і це індексатор (`T038`), а не цей екран.
+ */
+export interface HistoryRow {
+  signature: string
+  slot: number
+  /** `null` — вузол не знає часу цього блоку; порядком лишається слот. */
+  when: Date | null
+  failed: boolean
+}
+
+export interface AddressHistoryView {
+  /** Найновіші першими. */
+  rows: HistoryRow[]
+  syncedAt: Date
+  /** За межею вікна є старіші транзакції — обрив названий, а не мовчазний. */
+  more: boolean
+}
+
+/** Відповідь `GET /v1/allowances/:pda/signatures` → модель показу. */
+export function historyFromSignatures(response: {
+  items: readonly { signature: string; slot: number; blockTime: string | null; failed: boolean }[]
+  syncedAt: string
+  more: boolean
+}): AddressHistoryView {
+  return {
+    rows: response.items.map((item) => ({
+      signature: item.signature,
+      slot: item.slot,
+      when: item.blockTime === null ? null : new Date(item.blockTime),
+      failed: item.failed,
+    })),
+    syncedAt: new Date(response.syncedAt),
+    more: response.more,
+  }
+}
+
+/** Рядок вигаданої стрічки мока M0. Справжня історія приходить `HistoryRow`. */
 export interface ActivityRow {
   date: string
   description: string
@@ -440,7 +483,13 @@ export function detailFromAllowance(
     counterpartyAddress: subscription ? (card.planPda ?? card.delegate) : card.delegate,
     mintAddress: card.mint,
     periodStartedAt: dateOrNull(card.periodStartedAt),
-    // Дати видачі в акаунті немає — вона прийде зі стрічки подій (`T030`).
+    /*
+     * Дати видачі в акаунті немає, і зі стрічки `T030` вона теж не виводиться:
+     * найстаріший підпис за адресою — це не обов'язково видача цього дозволу.
+     * Скасування закриває акаунт, ті самі сіди дають ту саму адресу знову, і
+     * стара транзакція за нею може належати попередньому дозволу. Дату дасть
+     * декодована подія створення (`T038`, `T041`), не список підписів.
+     */
     givenOn: null,
     // Назви плану в мережі немає: план тримає суму, період і мін, не назву.
     planName: null,

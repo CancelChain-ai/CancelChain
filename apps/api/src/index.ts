@@ -1,6 +1,7 @@
 import {
   chainConfigFromEnv,
   createChainClient,
+  readAddressHistory,
   readAllowance,
   readAllowances,
   toAddress,
@@ -71,6 +72,11 @@ function main(): void {
       get: (pda) => readAllowance(chain, { pda: toAddress(pda) }),
       cached: (pda) => cachedAllowance(database.db, pda),
       settlementMint: chain.usdcMint,
+    },
+    signatures: {
+      // Стрічка на вимогу (`T030`): сховище порожнє до `T038`, тож історія
+      // адреси береться з мережі на кожен запит картки.
+      history: (pda, limit) => readAddressHistory(chain, { address: toAddress(pda), limit }),
     },
     blockhash: {
       // `confirmed`, як і слот у `/health`: `finalized` дав би хеш на пів

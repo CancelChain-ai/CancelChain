@@ -9,10 +9,12 @@ import {
 } from './api.js'
 import { PERMISSIONS, type Permission } from './mockData.js'
 import {
+  type AddressHistoryView,
   type AllowanceDetailView,
   type AllowanceView,
   detailFromAllowance,
   detailFromPermission,
+  historyFromSignatures,
   viewFromAllowance,
   viewFromPermission,
 } from './view.js'
@@ -87,6 +89,15 @@ export interface AllowanceSource {
    * сказати саме це, а не «не вдалося завантажити».
    */
   getAllowance(id: string, signal?: AbortSignal): Promise<AllowanceDetailView | null>
+  /**
+   * Транзакції, що торкнулися адреси дозволу (`T030`).
+   *
+   * `null` — за цим джерелом мережі немає: у мока стрічка вже лежить у самій
+   * картці, вигадана разом з усім іншим. Окремий запит, а не поле картки,
+   * навмисно: п'ять полів `FR-002` не мають чекати на історію й не мають
+   * зникати разом з нею, коли вона не доїде.
+   */
+  getHistory(id: string, signal?: AbortSignal): Promise<AddressHistoryView | null>
 }
 
 export class WalletRequiredError extends Error {
@@ -140,6 +151,9 @@ export function createMockSource(): AllowanceSource {
       const permission = mockData.find(id)
       return Promise.resolve(permission === undefined ? null : detailFromPermission(permission))
     },
+    // Мережі за моком немає, тож і історії адреси немає: вигадана стрічка
+    // приїжджає в самій картці (`detail.activity`).
+    getHistory: () => Promise.resolve(null),
   }
 }
 
@@ -201,6 +215,9 @@ export function createApiSource(client: ApiClient): AllowanceSource {
         if (error instanceof ApiRequestError && error.code === 'NOT_FOUND') return null
         throw error
       }
+    },
+    async getHistory(id, signal) {
+      return historyFromSignatures(await client.listSignatures(id, undefined, signal))
     },
   }
 }

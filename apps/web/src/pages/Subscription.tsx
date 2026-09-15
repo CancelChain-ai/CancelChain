@@ -1,6 +1,10 @@
+import { shortenAddress } from '../chain/wallet'
 import ConsentStrip from '../components/ConsentStrip'
 import type { AllowanceState } from '../lib/useAllowance'
+import type { HistoryState } from '../lib/useHistory'
 import {
+  type ActivityRow,
+  type AddressHistoryView,
   type AllowanceDetailView,
   type CardField,
   capSentence,
@@ -34,6 +38,18 @@ import {
 interface SubscriptionProps {
   state: AllowanceState
   onBack: () => void
+  /**
+   * Стрічка (`T030`). Своїм станом, а не полем картки: невдача історії не має
+   * права забрати з екрана п'ять полів `FR-002`. Немає — екран каже, що
+   * стрічки він не читає, замість того щоб показати порожню.
+   */
+  history?: HistoryState | undefined
+  /**
+   * Посилання на транзакцію в оглядачі. Приходить ззовні, бо мережу знає
+   * оточення гаманця, а не цей екран; `null` з неї — оглядача для цієї мережі
+   * немає (локальний вузол).
+   */
+  explorerUrl?: ((signature: string) => string | null) | undefined
   /**
    * Дії. Кожна з них існує на екрані рівно тоді, коли є що викликати: кнопка,
    * яка нічого не робить, гірша за її відсутність. На справжніх даних дій поки
@@ -162,58 +178,164 @@ const ReadAt = ({ detail }: { detail: AllowanceDetailView }) => (
   </p>
 )
 
-const Activity = ({ detail }: { detail: AllowanceDetailView }) => (
+/**
+ * Стрічка на вимогу — `T030`, мінімальна форма `FR-005`.
+ *
+ * **Що вона каже і чого не каже.** Без індексатора в нас є рівно
+ * `getSignaturesForAddress`: транзакція згадала цю адресу, і мережа її
+ * прийняла або ні. Ані суми, ані «списано / скасовано», ані причини відмови
+ * тут немає — щоб їх назвати, треба розбирати логи програми (`T038`) і мапити
+ * коди помилок у категорії (`T040`). Порожнє поле замість здогадки, як і в
+ * решті екрана.
+ *
+ * **Це історія адреси, а не дозволу.** Акаунт закривається скасуванням, і ті
+ * самі сіди дають ту саму адресу знову, тож старий рядок може належати
+ * дозволу, якого вже немає. Екран каже це вголос, а не робить вигляд, що
+ * стрічка суцільна.
+ */
+const HistoryFeed = ({
+  history,
+  explorerUrl,
+}: {
+  history: AddressHistoryView
+  explorerUrl: ((signature: string) => string | null) | undefined
+}) => {
+  if (history.rows.length === 0) {
+    return (
+      <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
+        No transaction has touched this address — read at {formatClock(history.syncedAt)}. That is
+        an answer from the network, not a feed we failed to load.
+      </p>
+    )
+  }
+
+  return (
+    <>
+      <p className="mt-3 max-w-[520px] text-[12px] leading-relaxed text-ink/45">
+        Transactions that mentioned this address. What each one did is not read here — only whether
+        the network accepted it.
+      </p>
+      <div className="mt-3 border-t border-hairline">
+        {history.rows.map((row) => {
+          const url = explorerUrl?.(row.signature) ?? null
+          const short = shortenAddress(row.signature)
+          return (
+            <div
+              key={row.signature}
+              className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 gap-y-1 border-b border-hairline py-3 text-[13px] sm:grid-cols-[120px_1fr_auto]"
+            >
+              <span className="tnum text-ink/55">
+                {row.when === null
+                  ? `slot ${row.slot}`
+                  : `${shortDay(row.when)} ${formatClock(row.when)}`}
+              </span>
+              <span
+                className={`col-span-2 sm:col-span-1 ${row.failed ? 'text-rust' : 'text-ink/80'}`}
+              >
+                {row.failed ? 'The network refused it' : 'The network accepted it'}
+              </span>
+              <span className="justify-self-end font-mono text-[12px] tnum">
+                {url === null ? (
+                  <span className="text-ink/45">{short}</span>
+                ) : (
+                  <a
+                    href={url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-ink/55 underline underline-offset-4 hover:text-ink"
+                  >
+                    {short}
+                  </a>
+                )}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <p className="mt-3 max-w-[520px] text-[12px] leading-relaxed text-ink/45">
+        Read at {formatClock(history.syncedAt)}.{' '}
+        {history.more
+          ? `Showing the ${history.rows.length} most recent — the address has older ones.`
+          : 'That is everything this node still keeps for the address.'}{' '}
+        Cancelling closes the account and the same address can be granted again, so an older row may
+        belong to a permission that no longer exists.
+      </p>
+    </>
+  )
+}
+
+/**
+ * Стрічка мока M0 — вигадана разом з усім іншим і тому приїжджає в самій
+ * картці. Справжня історія приходить окремим запитом (`HistoryFeed`).
+ */
+const MockActivity = ({ rows }: { rows: ActivityRow[] }) => (
+  <>
+    <div className="mt-3 border-t border-hairline">
+      {rows.map((event) => (
+        <div
+          key={`${event.date}-${event.description}`}
+          className={`border-b border-hairline py-3 text-[13px] ${
+            event.rejected ? 'text-rust' : 'text-ink'
+          }`}
+        >
+          <div className="sm:hidden">
+            <div className={event.rejected ? 'text-rust' : 'text-ink/80'}>{event.description}</div>
+            <div className="mt-1 flex items-baseline justify-between gap-4">
+              <span className={`tnum ${event.rejected ? 'text-rust' : 'text-ink/55'}`}>
+                {event.date}
+              </span>
+              <span className={`tnum ${event.rejected ? 'text-rust' : 'text-ink/55'}`}>
+                {event.amount === null ? '—' : formatMoney(event.amount)}
+              </span>
+            </div>
+          </div>
+
+          <div className="hidden grid-cols-[100px_1fr_auto] items-baseline gap-4 sm:grid">
+            <span className={`tnum ${event.rejected ? 'text-rust' : 'text-ink/55'}`}>
+              {event.date}
+            </span>
+            <span className={event.rejected ? 'text-rust' : 'text-ink/80'}>
+              {event.description}
+            </span>
+            <span className="tnum">{event.amount === null ? '—' : formatMoney(event.amount)}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+    <p className="mt-3 text-[12px] text-ink/45">
+      Showing the last 90 days. Older activity stays on the network.
+    </p>
+  </>
+)
+
+const Activity = ({
+  detail,
+  history,
+  explorerUrl,
+}: {
+  detail: AllowanceDetailView
+  history: HistoryState | undefined
+  explorerUrl: ((signature: string) => string | null) | undefined
+}) => (
   <>
     <h2 className="mt-12 text-[13px] uppercase tracking-[0.08em] text-ink/55">Activity</h2>
-    {detail.activity === null ? (
+    {detail.activity !== null ? (
+      <MockActivity rows={detail.activity} />
+    ) : history === undefined || history.status === 'unavailable' ? (
       <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
-        Charges and refused attempts are not read on this screen yet. That is a feed we do not fetch
-        — not a history that is empty.
+        Charges and refused attempts are not read on this screen. That is a feed we do not fetch —
+        not a history that is empty.
       </p>
+    ) : history.status === 'loading' ? (
+      <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
+        Reading the transactions that touched this address…
+      </p>
+    ) : history.status === 'error' ? (
+      // Стрічка не доїхала — і це сказано про стрічку. П'ять полів `FR-002`
+      // лишаються на екрані: вони прочитані іншим запитом і від цього не залежать.
+      <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-rust">{history.message}</p>
     ) : (
-      <>
-        <div className="mt-3 border-t border-hairline">
-          {/* Ключ — вміст події, не її позиція. Коли стрічку почне давати
-              індексатор, ключем стане підпис транзакції (`events.signature`). */}
-          {detail.activity.map((event) => (
-            <div
-              key={`${event.date}-${event.description}`}
-              className={`border-b border-hairline py-3 text-[13px] ${
-                event.rejected ? 'text-rust' : 'text-ink'
-              }`}
-            >
-              <div className="sm:hidden">
-                <div className={event.rejected ? 'text-rust' : 'text-ink/80'}>
-                  {event.description}
-                </div>
-                <div className="mt-1 flex items-baseline justify-between gap-4">
-                  <span className={`tnum ${event.rejected ? 'text-rust' : 'text-ink/55'}`}>
-                    {event.date}
-                  </span>
-                  <span className={`tnum ${event.rejected ? 'text-rust' : 'text-ink/55'}`}>
-                    {event.amount === null ? '—' : formatMoney(event.amount)}
-                  </span>
-                </div>
-              </div>
-
-              <div className="hidden grid-cols-[100px_1fr_auto] items-baseline gap-4 sm:grid">
-                <span className={`tnum ${event.rejected ? 'text-rust' : 'text-ink/55'}`}>
-                  {event.date}
-                </span>
-                <span className={event.rejected ? 'text-rust' : 'text-ink/80'}>
-                  {event.description}
-                </span>
-                <span className="tnum">
-                  {event.amount === null ? '—' : formatMoney(event.amount)}
-                </span>
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="mt-3 text-[12px] text-ink/45">
-          Showing the last 90 days. Older activity stays on the network.
-        </p>
-      </>
+      <HistoryFeed history={history.history} explorerUrl={explorerUrl} />
     )}
   </>
 )
@@ -229,6 +351,8 @@ const Card = ({
   onCancelNow,
   onResume,
   onKeep,
+  history,
+  explorerUrl,
 }: {
   detail: AllowanceDetailView
   refreshFailed: string | null
@@ -359,7 +483,7 @@ const Card = ({
         ))}
       </div>
 
-      <Activity detail={detail} />
+      <Activity detail={detail} history={history} explorerUrl={explorerUrl} />
 
       {actions.length > 0 && (
         <div className="mt-10 flex flex-col gap-3 sm:flex-row">

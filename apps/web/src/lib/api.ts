@@ -4,6 +4,7 @@ import {
   getAllowanceResponseSchema,
   latestBlockhashResponseSchema,
   listAllowancesResponseSchema,
+  listSignaturesResponseSchema,
 } from '@cancelchain/shared'
 import type { z } from 'zod'
 
@@ -21,6 +22,7 @@ import type { z } from 'zod'
 export type ListAllowancesResponse = z.infer<typeof listAllowancesResponseSchema>
 export type GetAllowanceResponse = z.infer<typeof getAllowanceResponseSchema>
 export type LatestBlockhashResponse = z.infer<typeof latestBlockhashResponseSchema>
+export type ListSignaturesResponse = z.infer<typeof listSignaturesResponseSchema>
 
 /** Сервер відповів помилкою у форматі `shared`: код і повідомлення відомі. */
 export class ApiRequestError extends Error {
@@ -74,6 +76,12 @@ export interface ApiClient {
    * URL вузла з ключем провайдера в бандл не потрапляє (`routes/blockhash.ts`).
    */
   getBlockhash(signal?: AbortSignal): Promise<LatestBlockhashResponse>
+  /**
+   * Транзакції, що торкнулися адреси дозволу (`T030`). Окремим запитом, а не
+   * полем картки: картка не має чекати на історію, а історія має право не
+   * доїхати, не забравши з собою п'ять полів `FR-002`.
+   */
+  listSignatures(pda: string, limit?: number, signal?: AbortSignal): Promise<ListSignaturesResponse>
 }
 
 /** Мінімум від `fetch`, потрібний клієнтові. Вужче — щоб тест не підробляв усе. */
@@ -131,6 +139,14 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
     getAllowance: (pda, signal) =>
       get(`/v1/allowances/${encodeURIComponent(pda)}`, getAllowanceResponseSchema, signal),
     getBlockhash: (signal) => get('/v1/blockhash', latestBlockhashResponseSchema, signal),
+    listSignatures: (pda, limit, signal) =>
+      get(
+        `/v1/allowances/${encodeURIComponent(pda)}/signatures${
+          limit === undefined ? '' : `?limit=${limit}`
+        }`,
+        listSignaturesResponseSchema,
+        signal,
+      ),
   }
 }
 

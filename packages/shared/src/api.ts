@@ -3,6 +3,7 @@ import { allowanceDetailSchema, allowanceSchema, eventSchema, planSchema } from 
 import {
   addressSchema,
   blockhashSchema,
+  signatureSchema,
   slotSchema,
   timestampSchema,
   u64Schema,
@@ -122,6 +123,57 @@ export const getAllowanceParamsSchema = z.object({
 export const getAllowanceResponseSchema = allowanceDetailSchema.extend({
   assetSupported: z.boolean(),
 })
+
+/**
+ * Транзакції, що торкнулися адреси дозволу —
+ * `GET /v1/allowances/:pda/signatures` (`T030`, мінімальна форма `FR-005`).
+ *
+ * **Це не `/v1/allowances/:pda/events`.** Там будуть події з індексатора,
+ * декодовані до «списано стільки» і «відмовлено з такої причини» (`T038`…`T041`).
+ * Тут — рівно те, що віддає `getSignaturesForAddress`, і ані байтом більше:
+ * підпис, слот, час блоку і чи транзакція впала. Що саме вона робила, з цієї
+ * відповіді **не видно**, тож жодна зі сторін цього не вигадує.
+ *
+ * Історія тут — історія **адреси**, а не дозволу. Акаунт дозволу закривається
+ * скасуванням, а ті самі сіди дають ту саму адресу знову, тож у старих рядках
+ * може лежати дозвіл, якого вже немає. Інтерфейс зобов'язаний казати саме
+ * «торкнулися цієї адреси».
+ */
+export const MAX_SIGNATURES_PAGE = 50
+export const DEFAULT_SIGNATURES_PAGE = 25
+
+export const listSignaturesQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(MAX_SIGNATURES_PAGE).default(DEFAULT_SIGNATURES_PAGE),
+})
+
+export const addressSignatureSchema = z.object({
+  signature: signatureSchema,
+  slot: slotSchema,
+  /** `null` — вузол не знає часу цього блоку. Порядком лишається слот. */
+  blockTime: timestampSchema.nullable(),
+  /**
+   * Транзакція впала. **Чому** — тут не сказано і сказано не буде: категорія
+   * відмови мапиться з коду програми окремою задачею (`T040`, `reasons.ts`), а
+   * сирий код помилки на екрані не означає для людини нічого.
+   */
+  failed: z.boolean(),
+})
+
+export type AddressSignature = z.infer<typeof addressSignatureSchema>
+
+export const listSignaturesResponseSchema = z.object({
+  /** Найновіші першими — так їх віддає вузол. */
+  items: z.array(addressSignatureSchema),
+  syncedAt: timestampSchema,
+  /**
+   * За межею `limit` є старіші транзакції. Без цього прапорця вікно з 25 рядків
+   * виглядало б як уся історія адреси — тобто мовчазний обрив, той самий, який
+   * `SC-013` забороняє стрічці індексатора.
+   */
+  more: z.boolean(),
+})
+
+export type ListSignaturesResponse = z.infer<typeof listSignaturesResponseSchema>
 
 export const MAX_EVENTS_PAGE = 100
 

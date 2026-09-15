@@ -37,6 +37,9 @@ function app(overrides: Partial<AppDeps> = {}) {
       cached: async () => null,
       settlementMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     },
+    signatures: {
+      history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
+    },
     blockhash: {
       latestBlockhash: async () => ({
         blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',

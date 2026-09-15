@@ -52,6 +52,7 @@ function clientReturning(response: ListAllowancesResponse): ApiClient {
     listAllowances: () => Promise.resolve(response),
     getAllowance: () => Promise.reject(new Error('the list tests do not ask for one allowance')),
     getBlockhash: () => Promise.reject(new Error('the list tests do not build a transaction')),
+    listSignatures: () => Promise.reject(new Error('the list tests do not ask for history')),
   }
 }
 
@@ -191,6 +192,7 @@ function cardClient(answer: () => Promise<GetAllowanceResponse>): ApiClient {
     listAllowances: () => Promise.reject(new Error('the card tests do not ask for the list')),
     getAllowance: answer,
     getBlockhash: () => Promise.reject(new Error('the card tests do not build a transaction')),
+    listSignatures: () => Promise.reject(new Error('these tests ask for history explicitly')),
   }
 }
 
@@ -254,5 +256,65 @@ describe('one allowance from the API', () => {
     const detail = await source.getAllowance(PDA)
     expect(detail?.assetSupported).toBe(false)
     expect(detail?.cap.decimals).toBeNull()
+  })
+})
+
+/**
+ * Історія адреси (`T030`). Мок мережі не має, і саме тому віддає `null`, а не
+ * порожній масив: порожня стрічка була б твердженням про історію, якої ніхто
+ * не читав.
+ */
+describe('the history behind one allowance', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+
+  function historyClient(response: {
+    items: { signature: string; slot: number; blockTime: string | null; failed: boolean }[]
+    syncedAt: string
+    more: boolean
+  }): ApiClient {
+    return {
+      listAllowances: () => Promise.reject(new Error('the history tests do not ask for the list')),
+      getAllowance: () => Promise.reject(new Error('the history tests do not ask for the card')),
+      getBlockhash: () => Promise.reject(new Error('the history tests do not build a transaction')),
+      listSignatures: () => Promise.resolve(response),
+    }
+  }
+
+  it('the mock has none, and says so as an answer', async () => {
+    const first = PERMISSIONS[0]
+    expect(first).toBeDefined()
+    expect(await createMockSource().getHistory(first?.id ?? '')).toBeNull()
+  })
+
+  it('turns the answer into dates the screen can format', async () => {
+    const source = createApiSource(
+      historyClient({
+        items: [
+          {
+            signature: SIGNATURE,
+            slot: 400_000_001,
+            blockTime: '2026-09-03T09:00:00.000Z',
+            failed: true,
+          },
+          {
+            signature: `${SIGNATURE.slice(0, 87)}z`,
+            slot: 400_000_000,
+            blockTime: null,
+            failed: false,
+          },
+        ],
+        syncedAt: '2026-09-03T10:00:00.000Z',
+        more: true,
+      }),
+    )
+    const history = await source.getHistory(PDA)
+
+    expect(history?.rows).toHaveLength(2)
+    expect(history?.rows[0]?.when?.toISOString()).toBe('2026-09-03T09:00:00.000Z')
+    expect(history?.rows[0]?.failed).toBe(true)
+    // Невідомий час блоку лишається невідомим — не «зараз» і не час читання.
+    expect(history?.rows[1]?.when).toBeNull()
+    expect(history?.more).toBe(true)
   })
 })

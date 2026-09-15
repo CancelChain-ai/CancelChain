@@ -85,6 +85,9 @@ function app(allowances: Partial<AppDeps['allowances']> = {}) {
       settlementMint: USDC,
       ...allowances,
     },
+    signatures: {
+      history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
+    },
     blockhash: {
       latestBlockhash: async () => ({
         blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',

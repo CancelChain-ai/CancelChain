@@ -227,3 +227,49 @@ describe('one allowance by address', () => {
     )
   })
 })
+
+/** Мінімальна стрічка на вимогу — `T030`. */
+describe('the signatures of one allowance', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+  const HISTORY = {
+    items: [
+      {
+        signature: SIGNATURE,
+        slot: 400_000_001,
+        blockTime: '2026-09-03T09:00:00.000Z',
+        failed: true,
+      },
+    ],
+    syncedAt: '2026-09-03T10:00:00.000Z',
+    more: true,
+  }
+
+  it('asks the address for its own history', async () => {
+    const { fetch, calls } = respondWith(200, HISTORY)
+    const body = await createApiClient('', fetch).listSignatures(PDA)
+
+    expect(calls[0]?.url).toBe(`/v1/allowances/${PDA}/signatures`)
+    expect(body.items[0]?.failed).toBe(true)
+    expect(body.more).toBe(true)
+  })
+
+  it('passes a window through when one is asked for', async () => {
+    const { fetch, calls } = respondWith(200, HISTORY)
+    await createApiClient('', fetch).listSignatures(PDA, 5)
+
+    expect(calls[0]?.url).toBe(`/v1/allowances/${PDA}/signatures?limit=5`)
+  })
+
+  it('fails loudly when the history does not match the contract', async () => {
+    // Час блоку рядком «нещодавно» замість ISO — це розбіжність контрактів, а
+    // не порожня стрічка, і мовчазний `[]` тут був би найгіршою з відповідей.
+    const { fetch } = respondWith(200, {
+      ...HISTORY,
+      items: [{ ...HISTORY.items[0], blockTime: 'recently' }],
+    })
+    await expect(createApiClient('', fetch).listSignatures(PDA)).rejects.toBeInstanceOf(
+      ApiContractError,
+    )
+  })
+})

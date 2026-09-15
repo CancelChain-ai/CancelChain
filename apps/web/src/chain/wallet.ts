@@ -125,6 +125,20 @@ export function shortenAddress(address: string, edge = 4): string {
     : `${address.slice(0, edge)}…${address.slice(-edge)}`
 }
 
+/**
+ * Посилання на транзакцію в оглядачі — `T030`.
+ *
+ * `null` для локального вузла: публічний оглядач його не бачить, і посилання,
+ * яке відкриє порожню сторінку, гірше за підпис, який можна скопіювати.
+ * Mainnet тут теоретичний (сервер читає лише devnet), але параметр `cluster`
+ * оглядач розуміє тільки для нетипової мережі — на mainnet він зайвий.
+ */
+export function explorerTxUrl(signature: string, cluster: Cluster): string | null {
+  if (cluster === 'localnet') return null
+  const base = `https://explorer.solana.com/tx/${encodeURIComponent(signature)}`
+  return cluster === 'mainnet-beta' ? base : `${base}?cluster=${cluster}`
+}
+
 export const SELECTED_WALLET_STORAGE_KEY = 'cancelchain:selected-wallet'
 
 export type WalletStateSync = {

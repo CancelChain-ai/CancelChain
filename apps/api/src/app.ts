@@ -5,6 +5,7 @@ import { type RateLimitOptions, rateLimit } from './rateLimit.js'
 import { type AllowancesDeps, allowanceRoute, allowancesRoute } from './routes/allowances.js'
 import { type BlockhashDeps, blockhashRoute } from './routes/blockhash.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
+import { type SignaturesDeps, signaturesRoute } from './routes/signatures.js'
 import type { AppEnv } from './types.js'
 
 export type AppDeps = {
@@ -12,6 +13,7 @@ export type AppDeps = {
   health: HealthDeps
   allowances: AllowancesDeps
   blockhash: BlockhashDeps
+  signatures: SignaturesDeps
   rateLimit?: RateLimitOptions
 }
 
@@ -36,6 +38,7 @@ export function createApp(deps: AppDeps) {
     .route('/', healthRoute(deps.health))
     .route('/', allowancesRoute(deps.allowances))
     .route('/', allowanceRoute(deps.allowances))
+    .route('/', signaturesRoute(deps.signatures))
     .route('/', blockhashRoute(deps.blockhash))
 }
 

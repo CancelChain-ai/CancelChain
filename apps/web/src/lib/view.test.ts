@@ -10,6 +10,7 @@ import {
   formatDay,
   formatMoney,
   formatPeriod,
+  historyFromSignatures,
   nextChargeAt,
   scaleAmount,
   shortDay,
@@ -535,5 +536,48 @@ describe('the five fields of FR-002 (SC-005)', () => {
     const fields = fieldsOf(detailFromAllowance(spent, NOW))
     expect(fields.nextCharge?.value).toBe('Never')
     expect(fields.nextCharge?.note).toContain('Nothing is left')
+  })
+})
+
+/**
+ * Мінімальна стрічка (`T030`): відповідь про підписи → модель показу. Тут
+ * немає ані сум, ані описів події — з `getSignaturesForAddress` їх не видно.
+ */
+describe('historyFromSignatures', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+
+  const response = {
+    items: [
+      {
+        signature: SIGNATURE,
+        slot: 400_000_001,
+        blockTime: '2026-09-03T09:00:00.000Z',
+        failed: true,
+      },
+    ],
+    syncedAt: '2026-09-03T10:00:00.000Z',
+    more: false,
+  }
+
+  it('carries dates as dates, not as ready-made strings', () => {
+    const history = historyFromSignatures(response)
+    expect(history.rows[0]?.when).toBeInstanceOf(Date)
+    expect(history.syncedAt.toISOString()).toBe('2026-09-03T10:00:00.000Z')
+  })
+
+  it('keeps an unknown block time unknown and leaves the slot as the order', () => {
+    const history = historyFromSignatures({
+      ...response,
+      items: [{ signature: SIGNATURE, slot: 400_000_001, blockTime: null, failed: true }],
+    })
+    expect(history.rows[0]?.when).toBeNull()
+    expect(history.rows[0]?.slot).toBe(400_000_001)
+  })
+
+  it('is empty when the address has no history, and does not invent a row', () => {
+    expect(
+      historyFromSignatures({ items: [], syncedAt: response.syncedAt, more: false }).rows,
+    ).toEqual([])
   })
 })
