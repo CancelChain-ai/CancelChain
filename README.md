@@ -127,4 +127,4 @@ measurement. The tools refuse to run against `mainnet-beta`.
 
 ## Licence
 
-Not yet decided.
+[MIT](LICENSE).
