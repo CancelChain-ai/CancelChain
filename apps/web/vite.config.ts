@@ -14,7 +14,16 @@ import { defineConfig } from 'vitest/config'
 const API_TARGET =
   process.env.API_PROXY_TARGET ?? process.env.VITE_API_URL ?? 'http://localhost:8080'
 
+/**
+ * Шлях, під яким сторінка лежить на хості. `/` — власний домен або корінь;
+ * `/CancelChain/` — GitHub Pages проєкту (`.github/workflows/pages.yml`).
+ * Без префікса `VITE_`: це параметр збірки, а не рантайму, і в бандл він
+ * потрапляє лише як уже підставлені шляхи до `assets/`.
+ */
+const BASE_PATH = process.env.BASE_PATH ?? '/'
+
 export default defineConfig({
+  base: BASE_PATH,
   plugins: [react()],
   server: {
     port: 5173,

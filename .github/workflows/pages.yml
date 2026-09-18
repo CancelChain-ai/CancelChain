@@ -1,0 +1,85 @@
+# Deploys apps/web to GitHub Pages on every push to main.
+#
+# Pages serves static files only. The web app reads its data from the API
+# (apps/api), which has to be hosted elsewhere and named in the repository
+# variable API_URL; the API in turn must list this site's origin in CORS_ORIGINS.
+# A build in `api` mode with no API_URL is refused below rather than deployed:
+# a page that fails every request is not a deployment, it is a broken link.
+#
+# Repository variables (Settings → Secrets and variables → Actions → Variables):
+#   API_URL          https://<api host>            required unless DATA_SOURCE=mock
+#   DATA_SOURCE      api | mock                    default: api
+#   SOLANA_CLUSTER   devnet | testnet | localnet   default: devnet
+#   PAGES_BASE_PATH  /                             only with a custom domain;
+#                                                  default: /<repository name>/
+#
+# Enable once: Settings → Pages → Build and deployment → Source: GitHub Actions.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DATA_SOURCE: ${{ vars.DATA_SOURCE || 'api' }}
+      API_URL: ${{ vars.API_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The same gate that guards every commit: lint → typecheck → test.
+      - run: pnpm gate
+
+      - name: Refuse to deploy an API-backed page that points at no API
+        if: env.DATA_SOURCE != 'mock' && env.API_URL == ''
+        run: |
+          echo "::error::DATA_SOURCE is '$DATA_SOURCE' but the repository variable API_URL is empty."
+          echo "Set API_URL to the hosted API (and add this site's origin to its CORS_ORIGINS),"
+          echo "or set DATA_SOURCE=mock to publish the invented-data demo on purpose."
+          exit 1
+
+      - name: Build apps/web
+        env:
+          BASE_PATH: ${{ vars.PAGES_BASE_PATH || format('/{0}/', github.event.repository.name) }}
+          VITE_API_URL: ${{ env.API_URL }}
+          VITE_DATA_SOURCE: ${{ env.DATA_SOURCE }}
+          VITE_SOLANA_CLUSTER: ${{ vars.SOLANA_CLUSTER || 'devnet' }}
+        run: pnpm --filter @cancelchain/web build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

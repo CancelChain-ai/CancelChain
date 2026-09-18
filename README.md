@@ -115,6 +115,18 @@ in `tests/e2e/config.ts`; the merchant's own are in `merchant-sim --help` and
 reason**, not failed — a green gate on a machine with no keys must not look like a
 measurement. The tools refuse to run against `mainnet-beta`.
 
+## Hosting
+
+`apps/web` is a static bundle and deploys to **GitHub Pages** from
+`.github/workflows/pages.yml` on every push to `main`: the gate runs first, then the
+build, then the deploy. Pages serves files only, so the API has to live elsewhere and be
+named in the repository variable `API_URL`; the API, in turn, must list the site's origin
+in `CORS_ORIGINS`. A build in `api` mode with no `API_URL` is refused, not deployed. To
+publish the invented-data demo on purpose, set `DATA_SOURCE=mock`.
+
+One-time setup: *Settings → Pages → Source: GitHub Actions*. The page is served under
+`/<repository name>/` unless `PAGES_BASE_PATH` says otherwise (a custom domain wants `/`).
+
 ## Rules the code keeps
 
 - No `any`, no non-null assertions — both are lint errors, not conventions.
