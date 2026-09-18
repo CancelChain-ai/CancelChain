@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { errorHandler, notFoundHandler } from './errors.js'
 import { type Logger, requestLogger } from './logger.js'
 import { type RateLimitOptions, rateLimit } from './rateLimit.js'
@@ -15,6 +16,12 @@ export type AppDeps = {
   blockhash: BlockhashDeps
   signatures: SignaturesDeps
   rateLimit?: RateLimitOptions
+  /**
+   * Origin-и браузерів, яким можна читати `/v1` з іншого хоста (сторінка на
+   * GitHub Pages, API на Render). Порожньо або не задано — заголовків CORS
+   * немає взагалі, тобто лише свій origin.
+   */
+  corsOrigins?: readonly string[]
 }
 
 /**
@@ -26,6 +33,11 @@ export function createApp(deps: AppDeps) {
   const app = new Hono<AppEnv>()
 
   app.use('*', requestLogger(deps.logger))
+  // CORS стоїть **перед** лімітом: інакше `429` приходить без заголовків, і
+  // браузер показує його як мережевий збій, а не як названу відмову.
+  if (deps.corsOrigins !== undefined && deps.corsOrigins.length > 0) {
+    app.use('/v1/*', cors({ origin: [...deps.corsOrigins], allowMethods: ['GET'] }))
+  }
   // Ліміт — лише на `/v1/*` (`PLAN.md` → Безпека). `/health` свідомо поза ним:
   // його пінгують healthcheck Railway і keep-alive кожні 14 хв (`T044`), і
   // задушити перевірку живості власним лімітом було б безглуздо.

@@ -197,3 +197,44 @@ describe('rate limit у складі застосунку', () => {
     }
   })
 })
+
+describe('CORS для сторінки на іншому хості', () => {
+  const PAGES = 'https://cancelchain-ai.github.io'
+
+  it('без CORS_ORIGINS заголовків немає — лише свій origin', async () => {
+    const res = await app().request('/health', { headers: { origin: PAGES } })
+    expect(res.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('названий origin отримує дозвіл на /v1, чужий — ні', async () => {
+    const instance = app({ corsOrigins: [PAGES] })
+    instance.get('/v1/probe', (c) => c.json({ ok: true }))
+
+    const ours = await instance.request('/v1/probe', { headers: { origin: PAGES } })
+    expect(ours.headers.get('access-control-allow-origin')).toBe(PAGES)
+
+    const theirs = await instance.request('/v1/probe', {
+      headers: { origin: 'https://someone-else.example' },
+    })
+    expect(theirs.headers.get('access-control-allow-origin')).toBeNull()
+  })
+
+  it('preflight відповідає без тіла і без ліміту', async () => {
+    const instance = app({ corsOrigins: [PAGES] })
+    const res = await instance.request('/v1/allowances?owner=x', {
+      method: 'OPTIONS',
+      headers: { origin: PAGES, 'access-control-request-method': 'GET' },
+    })
+    expect(res.status).toBe(204)
+    expect(res.headers.get('access-control-allow-origin')).toBe(PAGES)
+  })
+
+  it('429 теж несе заголовок — інакше браузер покаже його як мережевий збій', async () => {
+    const instance = app({ corsOrigins: [PAGES] })
+    instance.get('/v1/probe', (c) => c.json({ ok: true }))
+    for (let i = 0; i < RATE_LIMIT; i += 1) await instance.request('/v1/probe')
+    const res = await instance.request('/v1/probe', { headers: { origin: PAGES } })
+    expect(res.status).toBe(429)
+    expect(res.headers.get('access-control-allow-origin')).toBe(PAGES)
+  })
+})

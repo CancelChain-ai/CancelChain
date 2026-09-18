@@ -32,6 +32,15 @@ const databaseUrlSchema = z
   .string()
   .refine((value) => postgresUrl(value) !== null, 'expected a postgres:// connection string')
 
+/** Рівно origin: схема, хост, порт. Шлях або слеш у кінці — інший рядок, і браузер його не збігає. */
+const originSchema = z.string().refine((value) => {
+  try {
+    return new URL(value).origin === value
+  } catch {
+    return false
+  }
+}, 'expected an origin such as https://example.github.io — no path, no trailing slash')
+
 export const apiConfigSchema = z.object({
   port: z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
   databaseUrl: databaseUrlSchema,
@@ -42,9 +51,25 @@ export const apiConfigSchema = z.object({
    * сервісі — далеко від причини. Прапорець потрібен локальному Postgres у тестах.
    */
   allowDirectDatabase: z.boolean().default(false),
+  /**
+   * Origin-и, яким дозволено читати `/v1` з браузера. Порожній список — лише
+   * свій origin, і це замовчування: сторінка на GitHub Pages живе на іншому
+   * хості, ніж API, і кожен такий хост називається тут явно. `*` не приймається:
+   * дані публічні, але «кому завгодно» — це не конфігурація, а її відсутність.
+   */
+  corsOrigins: z.array(originSchema).default([]),
 })
 
 export type ApiConfig = z.infer<typeof apiConfigSchema>
+
+/** `CORS_ORIGINS=https://a.example,https://b.example` → список; порожньо → `[]`. */
+export function originsFromEnv(value: string | undefined): string[] {
+  if (value === undefined) return []
+  return value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+}
 
 export class DirectDatabaseConnectionError extends Error {
   constructor(port: string) {
@@ -80,5 +105,6 @@ export function apiConfigFromEnv(env: Record<string, string | undefined>): ApiCo
     databaseUrl: env.DATABASE_URL,
     logLevel: env.LOG_LEVEL,
     allowDirectDatabase: boolFromEnv(env.ALLOW_DIRECT_DATABASE),
+    corsOrigins: originsFromEnv(env.CORS_ORIGINS),
   })
 }

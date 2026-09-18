@@ -59,6 +59,7 @@ function main(): void {
 
   const app = createApp({
     logger,
+    corsOrigins: config.corsOrigins,
     health: {
       ping: database.ping,
       currentSlot: async () => Number(await chain.rpc.getSlot({ commitment: 'confirmed' }).send()),

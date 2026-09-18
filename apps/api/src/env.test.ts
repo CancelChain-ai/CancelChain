@@ -85,3 +85,29 @@ describe('assertPooledDatabase', () => {
     expect(() => assertPooledDatabase(config)).not.toThrow()
   })
 })
+
+describe('CORS_ORIGINS', () => {
+  const base = { DATABASE_URL: POOLED }
+
+  it('не задано — порожній список, тобто лише свій origin', () => {
+    expect(apiConfigFromEnv(base).corsOrigins).toEqual([])
+    expect(apiConfigFromEnv({ ...base, CORS_ORIGINS: '' }).corsOrigins).toEqual([])
+  })
+
+  it('список через кому, пробіли навколо не заважають', () => {
+    expect(
+      apiConfigFromEnv({
+        ...base,
+        CORS_ORIGINS: 'https://cancelchain-ai.github.io, http://localhost:5173',
+      }).corsOrigins,
+    ).toEqual(['https://cancelchain-ai.github.io', 'http://localhost:5173'])
+  })
+
+  it('приймає рівно origin — без шляху, без слеша в кінці, без зірочки', () => {
+    // Браузер порівнює origin буквально: `https://a.example/` йому не збігається
+    // з `https://a.example`, і такий запис мовчки не працював би.
+    for (const bad of ['https://a.example/', 'https://a.example/app', '*', 'a.example']) {
+      expect(() => apiConfigFromEnv({ ...base, CORS_ORIGINS: bad })).toThrow()
+    }
+  })
+})
