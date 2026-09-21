@@ -77,7 +77,7 @@ apps/api            Hono 4 · read-only over the network, shared Zod contracts, 
 packages/chain      @solana/kit 7.1.1 · account decoding, PDA derivation, instruction builders
 packages/shared     Zod schemas and error format used by both sides of the API
 packages/db         Drizzle schema (empty until the indexer exists)
-tools/merchant-sim  devnet-only test merchant: `whoami`, `charge`
+tools/merchant-sim  devnet-only test merchant: `whoami`, `charge`, `plan`
 tests               devnet campaigns and the allowance seeder
 ```
 

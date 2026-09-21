@@ -10,17 +10,26 @@ import {
 } from './charge.js'
 import { merchantSimConfigFromEnv } from './config.js'
 import { createMerchantSim, describeMerchant, type MerchantSim } from './merchant.js'
+import {
+  createPlan,
+  describeCreatePlanVerdict,
+  describePlan,
+  findPlanAddress,
+  type PlanTerms,
+  readPlan,
+} from './plan.js'
 
 /**
- * CLI тестового мерчанта. Дві команди: `whoami` доводить, що ключ читається,
+ * CLI тестового мерчанта. Три команди: `whoami` доводить, що ключ читається,
  * мережа відповідає і це не mainnet; `charge` робить спробу списання за
- * дозволом — у тому числі за вже відкликаним.
+ * дозволом — у тому числі за вже відкликаним; `plan` створює план підписки,
+ * на який далі підписуються з браузера (`T036`).
  *
- * Тут лише розбір аргументів і друк. Усі рішення про те, за чим списувати й що
- * означає відповідь мережі, живуть у `charge.ts` — інакше їх не було б чим
- * перевірити, крім запуску процесу.
+ * Тут лише розбір аргументів і друк. Усі рішення про те, за чим списувати, що
+ * лягає в план і що означає відповідь мережі, живуть у `charge.ts` і `plan.ts`
+ * — інакше їх не було б чим перевірити, крім запуску процесу.
  *
- * Створення плану (`T034`) і повний сценарій демо (`T056`) стають сюди далі.
+ * Повний сценарій демо (`T056`) стає сюди далі.
  */
 
 const USAGE = `merchant-sim <command>
@@ -46,7 +55,25 @@ disagrees with it is an error rather than an override:
   --delegate <address>          fixed/recurring: the merchant wallet the allowance names.
   --plan <address>              subscription: the plan account.
 
-Not implemented yet: plan (create a plan), demo (the full reproducible scenario).
+  plan --amount <units> --period-hours <hours> [plan flags]
+                                Create a subscription plan owned by the merchant, wait for it
+                                to land and print what the network holds. The plan's name is
+                                not on chain: it is registered separately (T035).
+
+Plan flags:
+  --amount <units>              Base units of the mint per period (u64). Required.
+  --period-hours <hours>        Billing period in whole hours — the program's own unit.
+                                Required. 720 is a month; 720 seconds would be twelve minutes.
+  --plan-id <u64>               Chosen by the merchant. Default: the current time in ms.
+  --ends-at <ISO 8601>          When the plan stops. Default: never.
+  --destinations <a,b,...>      Wallets allowed to receive. Default: the merchant. Up to 4.
+  --pullers <a,b,...>           Wallets allowed to charge. Default: the merchant. Up to 4.
+  --metadata-uri <uri>          At most 128 bytes. Default: empty.
+  --mint <address>              Settlement mint. Default: USDC_MINT.
+  --no-preflight                Send without simulating first. Off by default: a doomed plan
+                                proves nothing, so the fee is better saved.
+
+Not implemented yet: demo (the full reproducible scenario).
 
 Environment:
   SOLANA_CLUSTER              devnet | testnet | localnet — never mainnet-beta
@@ -212,6 +239,112 @@ async function charge(argv: readonly string[]): Promise<void> {
   if (verdict.outcome === 'no-attempt') process.exitCode = 1
 }
 
+function parseU64(raw: string, name: string): bigint {
+  if (!/^\d+$/.test(raw)) throw new UsageError(`--${name} must be a whole number, got "${raw}"`)
+  return BigInt(raw)
+}
+
+function parseWholeNumber(raw: string | undefined, name: string, why: string): number {
+  if (raw === undefined) throw new UsageError(`--${name} is required: ${why}`)
+  if (!/^\d+$/.test(raw)) throw new UsageError(`--${name} must be a whole number, got "${raw}"`)
+  return Number(raw)
+}
+
+/** `a,b,c` → список; порожній елемент (`a,,b`) — помилка, не пропуск. */
+function parseWalletList(raw: string | undefined, fallback: string): string[] {
+  if (raw === undefined) return [fallback]
+  const wallets = raw.split(',').map((wallet) => wallet.trim())
+  if (wallets.some((wallet) => wallet === '')) {
+    throw new UsageError(`a wallet list has an empty entry: "${raw}"`)
+  }
+  return wallets
+}
+
+/**
+ * Умови плану з прапорців. Усе, чого немає в прапорцях, має **названий**
+ * дефолт — і кожен дефолт друкується перед надсиланням, щоб мерчант бачив
+ * план цілком, а не лише те, що назвав сам.
+ */
+function planTermsFromFlags(flags: Flags, merchantAddress: string): PlanTerms {
+  const planIdRaw = flagValue(flags, 'plan-id')
+  const endsAt = flagValue(flags, 'ends-at')
+  return {
+    planId: planIdRaw === undefined ? BigInt(Date.now()) : parseU64(planIdRaw, 'plan-id'),
+    amount: parseAmount(flagValue(flags, 'amount')),
+    periodHours: parseWholeNumber(
+      flagValue(flags, 'period-hours'),
+      'period-hours',
+      'the billing period, in hours',
+    ),
+    endsAt: endsAt ?? null,
+    destinations: parseWalletList(flagValue(flags, 'destinations'), merchantAddress),
+    pullers: parseWalletList(flagValue(flags, 'pullers'), merchantAddress),
+    metadataUri: flagValue(flags, 'metadata-uri') ?? '',
+  }
+}
+
+/**
+ * Створення плану.
+ *
+ * Після сідання план **читається з мережі** й друкується саме прочитане: те,
+ * що просили, вже надруковано вище, і різниця між двома блоками — це різниця
+ * між нашим наміром і тим, що зберігає програма (`createdAt`, наприклад,
+ * ставить вона).
+ */
+async function plan(argv: readonly string[]): Promise<void> {
+  const { positional, flags } = parseFlags(argv)
+  if (positional.length > 0) {
+    throw new UsageError(`plan takes flags only, got "${positional.join(' ')}"`)
+  }
+  const merchant = await createMerchantSim(merchantSimConfigFromEnv(process.env))
+  const terms = planTermsFromFlags(flags, merchant.address)
+  const tokenMint = flagValue(flags, 'mint') ?? merchant.chain.usdcMint
+  const tokenProgram = await resolveTokenProgram(merchant.chain.rpc, toAddress(tokenMint))
+  const pda = await findPlanAddress({ owner: merchant.address, planId: terms.planId })
+
+  process.stdout.write(
+    `${[
+      describeMerchant(merchant),
+      `plan:         ${pda}`,
+      `plan id:      ${terms.planId}`,
+      `mint:         ${tokenMint}  (token program ${tokenProgram})`,
+      `amount:       ${terms.amount} base units per period`,
+      `period:       ${terms.periodHours} h`,
+      `ends:         ${terms.endsAt ?? 'never'}`,
+      `destinations: ${terms.destinations.join(', ')}`,
+      `pullers:      ${terms.pullers.join(', ')}`,
+      `metadata:     ${terms.metadataUri === '' ? '(none)' : terms.metadataUri}`,
+      '',
+    ].join('\n')}\n`,
+  )
+
+  const verdict = await createPlan(
+    merchant.chain.rpc,
+    { terms, merchant: merchant.signer, tokenMint, tokenProgram },
+    { skipPreflight: flags.get('no-preflight') === true },
+  )
+  process.stdout.write(`${describeCreatePlanVerdict(verdict)}\n`)
+
+  if (verdict.outcome !== 'created') {
+    process.exitCode = 1
+    return
+  }
+  const onChain = await readPlan(merchant.chain.rpc, verdict.pda)
+  process.stdout.write(
+    `${[
+      '',
+      'on chain now:',
+      describePlan(onChain),
+      '',
+      `explorer:     ${explorerUrl(merchant, verdict.signature)}`,
+      '',
+      'the name lives off chain — register it with POST /v1/merchants/plans (T035);',
+      'subscribers reach the plan by its address:',
+      `  ${onChain.pda}`,
+    ].join('\n')}\n`,
+  )
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2)
   if (command === 'whoami') {
@@ -220,6 +353,10 @@ async function main(): Promise<void> {
   }
   if (command === 'charge') {
     await charge(rest)
+    return
+  }
+  if (command === 'plan') {
+    await plan(rest)
     return
   }
   process.stdout.write(USAGE)
