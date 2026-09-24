@@ -97,12 +97,21 @@ pnpm gate                 # lint → typecheck → test; must be green before ev
 pnpm dev                  # api + web
 ```
 
-**Which process reads which file.** The root `.env` feeds the **API** only, and only
-under `pnpm dev`: `start` takes its environment from the host, where a checked-out file
-would not exist anyway. The **web** app is Vite, so its `VITE_*` come from
-`apps/web/.env` or from the build environment (that is what the Pages workflow passes) —
-the root file is invisible to it. Nothing here loads `.env` implicitly; a variable that
-is in neither place is simply absent.
+**One file, two readers.** The root `.env` serves both apps under `pnpm dev`: the API
+reads it through `--env-file-if-exists`, and Vite is pointed at the same directory
+(`envDir` in `apps/web/vite.config.ts`). `start` deliberately takes no file — on a host
+the environment comes from the service, and the Pages build passes `VITE_*` as build
+environment rather than as a file.
+
+That one file holds `JWT_SECRET` and `DATABASE_URL` next to the `VITE_*` keys. Only the
+prefixed ones reach the browser; `envPrefix` is written out in the config instead of
+being inherited, and `apps/web/vite.config.test.ts` fails if it ever widens. A build with
+a sentinel secret in the root `.env` was checked against `dist/`: the bundle carries
+`{VITE_API_URL, VITE_DATA_SOURCE}` and nothing else.
+
+Two variables are **not** read from the file: `API_PROXY_TARGET` and `BASE_PATH`. Vite
+puts nothing from `.env` into `process.env`, and those two are read there — they are
+launch and build parameters, given on the command line.
 
 The API refuses to start without `JWT_SECRET` (32 characters or more) and `AUTH_DOMAIN`,
 rather than accepting an empty secret and answering `401` to an honest signature later.
