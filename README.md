@@ -87,14 +87,25 @@ The three Solana packages are pinned exactly, without `^`, through a pnpm catalo
 
 ## Running it
 
-Requirements: Node ≥ 22, pnpm 9.
+Requirements: Node ≥ 22.9, pnpm 9. The version floor is not decorative: `pnpm dev`
+starts the API with `--env-file-if-exists`, which older 22.x does not have.
 
 ```bash
 pnpm install
-cp .env.example .env      # then fill in SOLANA_RPC_URL and USDC_MINT
+cp .env.example .env      # then fill in SOLANA_RPC_URL, USDC_MINT, JWT_SECRET, AUTH_DOMAIN
 pnpm gate                 # lint → typecheck → test; must be green before every commit
 pnpm dev                  # api + web
 ```
+
+**Which process reads which file.** The root `.env` feeds the **API** only, and only
+under `pnpm dev`: `start` takes its environment from the host, where a checked-out file
+would not exist anyway. The **web** app is Vite, so its `VITE_*` come from
+`apps/web/.env` or from the build environment (that is what the Pages workflow passes) —
+the root file is invisible to it. Nothing here loads `.env` implicitly; a variable that
+is in neither place is simply absent.
+
+The API refuses to start without `JWT_SECRET` (32 characters or more) and `AUTH_DOMAIN`,
+rather than accepting an empty secret and answering `401` to an honest signature later.
 
 `VITE_DATA_SOURCE=mock` runs the web app on invented data with no network behind it —
 useful for looking at the screens, useless as evidence. The default is `api`.

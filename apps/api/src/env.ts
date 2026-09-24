@@ -113,7 +113,7 @@ export class MerchantAuthNotConfiguredError extends Error {
     super(
       `merchant sign-in is not configured: ${detail}. Set JWT_SECRET ` +
         `(at least ${MIN_JWT_SECRET_LENGTH} characters) and AUTH_DOMAIN ` +
-        '(the domain the wallet shows, e.g. localhost:8879).',
+        '(the domain the wallet shows — the page, not this API, e.g. localhost:5173).',
     )
     this.name = 'MerchantAuthNotConfiguredError'
   }
