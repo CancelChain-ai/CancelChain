@@ -6,6 +6,8 @@ import {
   DEFAULT_PORT,
   DirectDatabaseConnectionError,
   databasePort,
+  MerchantAuthNotConfiguredError,
+  merchantAuthConfig,
   POOLER_PORT,
 } from './env.js'
 
@@ -109,5 +111,59 @@ describe('CORS_ORIGINS', () => {
     for (const bad of ['https://a.example/', 'https://a.example/app', '*', 'a.example']) {
       expect(() => apiConfigFromEnv({ ...base, CORS_ORIGINS: bad })).toThrow()
     }
+  })
+})
+
+describe('merchantAuthConfig', () => {
+  const SECRET = 'e'.repeat(32)
+  const config = (over: Record<string, unknown> = {}) =>
+    apiConfigSchema.parse({
+      databaseUrl: POOLED,
+      jwtSecret: SECRET,
+      authDomain: 'localhost:8879',
+      ...over,
+    })
+
+  it('віддає секрет і домен, коли обидва названі', () => {
+    expect(merchantAuthConfig(config())).toEqual({ jwtSecret: SECRET, domain: 'localhost:8879' })
+  })
+
+  /*
+   * Порожній секрет схема пропускає навмисно (див. `env.ts`), тож єдине місце,
+   * де це падає, — тут, при старті. Без цієї перевірки `JWT_SECRET`, якого
+   * забули задати, проявився б як `401` на чесному підписі.
+   */
+  it('порожній або короткий секрет — відмова при старті', () => {
+    expect(() => merchantAuthConfig(config({ jwtSecret: '' }))).toThrow(
+      MerchantAuthNotConfiguredError,
+    )
+    expect(() => merchantAuthConfig(config({ jwtSecret: 'short' }))).toThrow(
+      MerchantAuthNotConfiguredError,
+    )
+    expect(() => merchantAuthConfig(config({ jwtSecret: 'f'.repeat(31) }))).toThrow(/31 characters/)
+  })
+
+  it('домен — не URL: ані схеми, ані шляху, ані слеша', () => {
+    expect(() => merchantAuthConfig(config({ authDomain: '' }))).toThrow(/AUTH_DOMAIN is empty/)
+    for (const bad of ['https://localhost:8879', 'localhost/panel', 'localhost:8879/', 'a b']) {
+      expect(() => merchantAuthConfig(config({ authDomain: bad }))).toThrow(
+        MerchantAuthNotConfiguredError,
+      )
+    }
+  })
+
+  it('хост без порту теж домен', () => {
+    expect(merchantAuthConfig(config({ authDomain: 'cancelchain.example' })).domain).toBe(
+      'cancelchain.example',
+    )
+  })
+
+  it('читається з оточення тими самими іменами, що й у .env.example', () => {
+    const parsed = apiConfigFromEnv({
+      DATABASE_URL: POOLED,
+      JWT_SECRET: SECRET,
+      AUTH_DOMAIN: 'localhost:8879',
+    })
+    expect(merchantAuthConfig(parsed)).toEqual({ jwtSecret: SECRET, domain: 'localhost:8879' })
   })
 })

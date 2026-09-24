@@ -6,6 +6,7 @@ import { type RateLimitOptions, rateLimit } from './rateLimit.js'
 import { type AllowancesDeps, allowanceRoute, allowancesRoute } from './routes/allowances.js'
 import { type BlockhashDeps, blockhashRoute } from './routes/blockhash.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
+import { type MerchantsDeps, merchantPlansRoute, merchantSignInRoute } from './routes/merchants.js'
 import { type SignaturesDeps, signaturesRoute } from './routes/signatures.js'
 import type { AppEnv } from './types.js'
 
@@ -15,6 +16,7 @@ export type AppDeps = {
   allowances: AllowancesDeps
   blockhash: BlockhashDeps
   signatures: SignaturesDeps
+  merchants: MerchantsDeps
   rateLimit?: RateLimitOptions
   /**
    * Origin-и браузерів, яким можна читати `/v1` з іншого хоста (сторінка на
@@ -36,7 +38,16 @@ export function createApp(deps: AppDeps) {
   // CORS стоїть **перед** лімітом: інакше `429` приходить без заголовків, і
   // браузер показує його як мережевий збій, а не як названу відмову.
   if (deps.corsOrigins !== undefined && deps.corsOrigins.length > 0) {
-    app.use('/v1/*', cors({ origin: [...deps.corsOrigins], allowMethods: ['GET'] }))
+    app.use(
+      '/v1/*',
+      cors({
+        origin: [...deps.corsOrigins],
+        // POST — це вхід мерчанта й назва плану (`T035`); `Authorization`
+        // без цього переліку браузер у крос-доменний запит просто не покладе.
+        allowMethods: ['GET', 'POST'],
+        allowHeaders: ['Content-Type', 'Authorization'],
+      }),
+    )
   }
   // Ліміт — лише на `/v1/*` (`PLAN.md` → Безпека). `/health` свідомо поза ним:
   // його пінгують healthcheck Railway і keep-alive кожні 14 хв (`T044`), і
@@ -52,6 +63,8 @@ export function createApp(deps: AppDeps) {
     .route('/', allowanceRoute(deps.allowances))
     .route('/', signaturesRoute(deps.signatures))
     .route('/', blockhashRoute(deps.blockhash))
+    .route('/', merchantSignInRoute(deps.merchants))
+    .route('/', merchantPlansRoute(deps.merchants))
 }
 
 export type App = ReturnType<typeof createApp>

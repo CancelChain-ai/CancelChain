@@ -257,4 +257,60 @@ export const signInMessageSchema = z.object({
 
 export type SignInMessage = z.infer<typeof signInMessageSchema>
 
+/**
+ * Рядок, який людина бачить у вікні гаманця. Текст — частина того, що
+ * підписується: гаманець показує байти, а не структуру, тож підпис без
+ * читабельного тексту був би підписом наосліп.
+ *
+ * Формат зібрано з **рівно тих** полів, що є в `signInMessageSchema`, і збирає
+ * його одна функція на обидві сторони. Зліпи браузер свій рядок, а сервер свій
+ * — розбіжність в одному пробілі давала б `401` на чесному підписі, тобто
+ * помилку, яку неможливо побачити з відповіді.
+ */
+export const SIGN_IN_STATEMENT = 'Sign in to CancelChain as a merchant.'
+
+export function signInMessageText(message: SignInMessage): string {
+  return [
+    `${message.domain} wants you to sign in with your Solana account:`,
+    message.address,
+    '',
+    SIGN_IN_STATEMENT,
+    '',
+    `Nonce: ${message.nonce}`,
+    `Issued At: ${message.issuedAt}`,
+  ].join('\n')
+}
+
+/**
+ * Скільки живе сам **підпис** входу. Це не час життя токена: підпис лише
+ * доводить володіння ключем один раз, а далі носієм права стає JWT.
+ *
+ * Дві хвилини — це вікно на те, щоб людина встигла прочитати текст у гаманці й
+ * натиснути. Ширше вікно подовжує час, у який перехоплений підпис ще можна
+ * обміняти на токен; вужче ламає вхід тому, хто читає повільно.
+ */
+export const SIGN_IN_MAX_AGE_SECONDS = 120
+
+export const signInBodySchema = z.object({
+  message: signInMessageSchema,
+  /** Base58, 64 байти — той самий формат, що й у підпису транзакції. */
+  signature: signatureSchema,
+})
+
+export type SignInBody = z.infer<typeof signInBodySchema>
+
+export const signInResponseSchema = z.object({
+  token: z.string().min(1),
+  /** Кому видано. Клієнт не мусить розбирати JWT, щоб це знати. */
+  address: addressSchema,
+  /** Коли токен перестає діяти. Не «скільки лишилось» — годинники різні. */
+  expiresAt: timestampSchema,
+})
+
+export type SignInResponse = z.infer<typeof signInResponseSchema>
+
+/**
+ * Токен мерчанта живе 15 хвилин і не поновлюється. Він stateless: відкликати
+ * його ми не можемо, тож єдине, що обмежує вкрадений токен, — це строк.
+ */
 export const MERCHANT_JWT_TTL_SECONDS = 15 * 60

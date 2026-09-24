@@ -4,16 +4,18 @@ import {
   readAddressHistory,
   readAllowance,
   readAllowances,
+  readPlan,
   toAddress,
+  verifyWalletSignature,
 } from '@cancelchain/chain'
-import { allowances, indexerCursor } from '@cancelchain/db'
-import type { Allowance } from '@cancelchain/shared'
-import { allowanceSchema } from '@cancelchain/shared'
+import { allowances, indexerCursor, plans } from '@cancelchain/db'
+import type { Allowance, Plan } from '@cancelchain/shared'
+import { allowanceSchema, toU64 } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
 import { desc, eq } from 'drizzle-orm'
 import { createApp } from './app.js'
 import { createDb, type Db } from './db.js'
-import { apiConfigFromEnv } from './env.js'
+import { apiConfigFromEnv, merchantAuthConfig } from './env.js'
 import { createLogger } from './logger.js'
 
 /**
@@ -49,12 +51,39 @@ async function cachedAllowance(db: Db, pda: string): Promise<Allowance | null> {
   return row === undefined ? null : allowanceSchema.parse(row)
 }
 
+/**
+ * Рядок каталогу планів. Назва — єдине, що прийшло від мерчанта; решта полів
+ * уже прочитана з мережі (`routes/merchants.ts`), і повторний запис тими
+ * самими значеннями оновлює саме назву.
+ *
+ * Суми в сховищі — `bigint`, у контракті API — рядки (`u64Schema`). Конвертація
+ * стоїть рівно тут, на межі, і ніде більше.
+ */
+async function savePlan(db: Db, plan: Plan): Promise<void> {
+  const fields = {
+    merchant: plan.merchant,
+    planId: toU64(plan.planId),
+    name: plan.name,
+    amount: toU64(plan.amount),
+    periodSeconds: plan.periodSeconds,
+    mint: plan.mint,
+    createdAt: plan.createdAt,
+  }
+  await db
+    .insert(plans)
+    .values({ pda: plan.pda, ...fields })
+    .onConflictDoUpdate({ target: plans.pda, set: fields })
+}
+
 function main(): void {
   const startedAt = Date.now()
   const config = apiConfigFromEnv(process.env)
   const logger = createLogger(config.logLevel)
   // Кидає на mainnet без явного дозволу — сервер читає чужі гроші лише на devnet.
   const chain = createChainClient(chainConfigFromEnv(process.env))
+  // Кидає при старті, якщо секрет або домен не налаштовані: `401` на чесному
+  // підписі — найгірший спосіб дізнатися про порожній `JWT_SECRET`.
+  const auth = merchantAuthConfig(config)
   const database = createDb(config)
 
   const app = createApp({
@@ -78,6 +107,19 @@ function main(): void {
       // Стрічка на вимогу (`T030`): сховище порожнє до `T038`, тож історія
       // адреси береться з мережі на кожен запит картки.
       history: (pda, limit) => readAddressHistory(chain, { address: toAddress(pda), limit }),
+    },
+    merchants: {
+      jwtSecret: auth.jwtSecret,
+      domain: auth.domain,
+      // Помилки читання плану розбирає сам маршрут — див. `routes/merchants.ts`.
+      plan: (pda) => readPlan(chain.rpc, toAddress(pda), { commitment: 'confirmed' }),
+      save: (plan) => savePlan(database.db, plan),
+      verifySignature: (input) =>
+        verifyWalletSignature({
+          address: toAddress(input.address),
+          signature: input.signature,
+          message: input.message,
+        }),
     },
     blockhash: {
       // `confirmed`, як і слот у `/health`: `finalized` дав би хеш на пів

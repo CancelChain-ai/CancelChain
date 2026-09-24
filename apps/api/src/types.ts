@@ -1,3 +1,4 @@
+import type { MerchantVariables } from './auth.js'
 import type { LoggerVariables } from './logger.js'
 
 /**
@@ -6,5 +7,10 @@ import type { LoggerVariables } from './logger.js'
  * кожен файл оголошував би свій і типи розходилися б мовчки.
  */
 export type AppEnv = {
-  Variables: LoggerVariables
+  /**
+   * `merchant` ставить лише `merchantAuth` і лише на захищених маршрутах, тож
+   * у решті він `undefined` — Hono саме так типізує змінні, які middleware
+   * міг не поставити. Читати його без `merchantAuth` попереду безглуздо.
+   */
+  Variables: LoggerVariables & Partial<MerchantVariables>
 }

@@ -6,8 +6,13 @@ import {
   listEventsQuerySchema,
   listedAllowanceSchema,
   MAX_EVENTS_PAGE,
+  MERCHANT_JWT_TTL_SECONDS,
   pushSubscribeBodySchema,
+  SIGN_IN_MAX_AGE_SECONDS,
+  signInBodySchema,
   signInMessageSchema,
+  signInMessageText,
+  signInResponseSchema,
   streamMessageSchema,
 } from './api.js'
 
@@ -178,5 +183,67 @@ describe('latestBlockhashResponseSchema', () => {
   it('refuses a blockhash that is not base58', () => {
     const body = { blockhash: 'not a blockhash', lastValidBlockHeight: '1', slot: 1 }
     expect(latestBlockhashResponseSchema.safeParse(body).success).toBe(false)
+  })
+})
+
+describe('sign-in message', () => {
+  const message = {
+    domain: 'localhost:8879',
+    address: OWNER,
+    nonce: 'a1b2c3d4e5f6',
+    issuedAt: '2026-09-24T09:00:00.000Z',
+  }
+
+  it('carries every field of the message and nothing else', () => {
+    const text = signInMessageText(message)
+    for (const value of Object.values(message)) expect(text).toContain(value)
+  })
+
+  /*
+   * The wallet shows bytes, and both sides build those bytes from this one
+   * function. A test that rebuilt the text by hand would only prove the test
+   * agrees with itself, so it pins the exact shape instead.
+   */
+  it('is byte-for-byte stable', () => {
+    expect(signInMessageText(message)).toBe(
+      [
+        'localhost:8879 wants you to sign in with your Solana account:',
+        OWNER,
+        '',
+        'Sign in to CancelChain as a merchant.',
+        '',
+        'Nonce: a1b2c3d4e5f6',
+        'Issued At: 2026-09-24T09:00:00.000Z',
+      ].join('\n'),
+    )
+  })
+
+  it('changes with every field, so no two messages share a signature', () => {
+    const base = signInMessageText(message)
+    expect(signInMessageText({ ...message, nonce: 'a1b2c3d4e5f7' })).not.toBe(base)
+    expect(signInMessageText({ ...message, domain: 'cancelchain.example' })).not.toBe(base)
+    expect(signInMessageText({ ...message, issuedAt: '2026-09-24T09:00:01.000Z' })).not.toBe(base)
+  })
+
+  it('refuses a nonce short enough to collide', () => {
+    expect(signInMessageSchema.safeParse({ ...message, nonce: 'abc' }).success).toBe(false)
+  })
+
+  it('takes a base58 signature next to the message', () => {
+    const signature = '5'.repeat(88)
+    expect(signInBodySchema.safeParse({ message, signature }).success).toBe(true)
+    expect(signInBodySchema.safeParse({ message, signature: 'not base58 0OIl' }).success).toBe(
+      false,
+    )
+  })
+
+  it('answers with a deadline, not a duration', () => {
+    const body = { token: 'header.payload.signature', address: OWNER, expiresAt: message.issuedAt }
+    expect(signInResponseSchema.parse(body)).toEqual(body)
+    expect(signInResponseSchema.safeParse({ ...body, expiresAt: 900 }).success).toBe(false)
+  })
+
+  it('keeps the signature window shorter than the token it buys', () => {
+    expect(SIGN_IN_MAX_AGE_SECONDS).toBeLessThan(MERCHANT_JWT_TTL_SECONDS)
   })
 })

@@ -54,6 +54,17 @@ function app(signatures: Partial<AppDeps['signatures']> = {}) {
       settlementMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     },
     signatures: { history: async () => history(), ...signatures },
+    // Маршрути мерчанта до цих перевірок стосунку не мають; заглушка стоїть
+    // лише тому, що `createApp` збирає весь застосунок, а не окрему ручку.
+    merchants: {
+      jwtSecret: 'test-secret-at-least-32-characters',
+      domain: 'localhost',
+      plan: async () => {
+        throw new Error('the merchant routes take no part in these checks')
+      },
+      save: async () => {},
+      verifySignature: async () => false,
+    },
     blockhash: {
       latestBlockhash: async () => ({
         blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',

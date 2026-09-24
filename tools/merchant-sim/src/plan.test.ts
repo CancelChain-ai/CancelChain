@@ -33,13 +33,11 @@ import {
   describeCreatePlanVerdict,
   describePlan,
   findPlanAddress,
-  NotAPlanError,
   PlanAmountError,
   PlanEndError,
   PlanIdError,
   PlanListError,
   PlanMetadataUriError,
-  PlanNotFoundError,
   PlanPeriodError,
   type PlanReaderRpc,
   type PlanSnapshot,
@@ -130,6 +128,24 @@ function plainAccounts(instruction: Instruction): PlainAccount[] {
 
 const pad = (wallets: readonly string[]): Address[] =>
   Array.from({ length: 4 }, (_, index) => (wallets[index] ?? ZERO_ADDRESS) as Address)
+
+/**
+ * Акаунт плану так, як його віддає `getAccountInfo`. Потрібен тут заради
+ * наскрізного round-trip «інструкція → акаунт → `readPlan`»: сам читач і його
+ * власні тести живуть у `packages/chain` (`plan.test.ts`).
+ */
+function encodeAccount(plan: PlanArgs, owner: Address = PROGRAM_ADDRESS) {
+  const bytes = getPlanEncoder().encode(plan)
+  return { owner, data: [getBase64Decoder().decode(bytes), 'base64'] as const }
+}
+
+function planReader(accounts: Record<string, ReturnType<typeof encodeAccount>>): PlanReaderRpc {
+  return {
+    getAccountInfo: (address) => ({
+      send: async () => ({ value: accounts[address] ?? null }),
+    }),
+  }
+}
 
 describe('інструкція створення плану', () => {
   it('це createPlan нашої програми', async () => {
@@ -353,90 +369,6 @@ describe('перевіряються власні входи, а не стан �
   })
 })
 
-/** Акаунт плану так, як його віддає `getAccountInfo` з `encoding: 'base64'`. */
-function encodeAccount(plan: PlanArgs, owner: Address = PROGRAM_ADDRESS) {
-  const bytes = getPlanEncoder().encode(plan)
-  return { owner, data: [getBase64Decoder().decode(bytes), 'base64'] as const }
-}
-
-type StoredAccount = ReturnType<typeof encodeAccount>
-
-function planReader(accounts: Record<string, StoredAccount | null>): PlanReaderRpc {
-  return {
-    getAccountInfo: (address) => ({
-      send: async () => ({ value: accounts[address] ?? null }),
-    }),
-  }
-}
-
-function storedPlan(overrides: Partial<PlanArgs['data']> = {}, status = PlanStatus.Active) {
-  return {
-    discriminator: AccountDiscriminator.Plan,
-    owner: merchant.address,
-    bump: 254,
-    status,
-    data: {
-      planId: PLAN_ID,
-      mint: MINT,
-      terms: { amount: AMOUNT, periodHours: BigInt(PERIOD_HOURS), createdAt: 1_758_456_000n },
-      endTs: 0n,
-      destinations: pad([merchant.address]),
-      pullers: pad([merchant.address]),
-      metadataUri: '',
-      ...overrides,
-    },
-  } satisfies PlanArgs
-}
-
-describe('readPlan — план так, як його зберігає мережа', () => {
-  it('порожні поля повертаються порожніми, а не нулями чи адресами-заповнювачами', async () => {
-    const snapshot = await readPlan(
-      planReader({ [SOMEWHERE]: encodeAccount(storedPlan()) }),
-      SOMEWHERE,
-    )
-    expect(snapshot.endsAt).toBeNull()
-    expect(snapshot.metadataUri).toBe('')
-    expect(snapshot.destinations).toEqual([merchant.address])
-    expect(snapshot.pullers).toEqual([merchant.address])
-    expect(snapshot.createdAt).toBe('2025-09-21T12:00:00.000Z')
-    expect(snapshot.status).toBe('active')
-  })
-
-  it('статус sunset читається як sunset', async () => {
-    const reader = planReader({
-      [SOMEWHERE]: encodeAccount(storedPlan({ endTs: NEXT_YEAR_SECONDS }, PlanStatus.Sunset)),
-    })
-    const snapshot = await readPlan(reader, SOMEWHERE)
-    expect(snapshot.status).toBe('sunset')
-    expect(snapshot.endsAt).toBe(NEXT_YEAR)
-  })
-
-  it('акаунта немає — це названа відмова, не порожній план', async () => {
-    await expect(readPlan(planReader({}), SOMEWHERE)).rejects.toThrow(PlanNotFoundError)
-  })
-
-  it('чужий акаунт потрібної довжини планом не стає', async () => {
-    const foreign = planReader({ [SOMEWHERE]: encodeAccount(storedPlan(), OTHER_WALLET) })
-    await expect(readPlan(foreign, SOMEWHERE)).rejects.toThrow(NotAPlanError)
-    await expect(readPlan(foreign, SOMEWHERE)).rejects.toThrow(/belongs to/)
-  })
-
-  it('не той дискримінатор — не план, навіть при правильному власнику', async () => {
-    const reader = planReader({
-      [SOMEWHERE]: encodeAccount({ ...storedPlan(), discriminator: AccountDiscriminator.Plan + 1 }),
-    })
-    await expect(readPlan(reader, SOMEWHERE)).rejects.toThrow(/discriminator/)
-  })
-
-  it('не той розмір — не план', async () => {
-    const short = encodeAccount(storedPlan())
-    const reader = planReader({
-      [SOMEWHERE]: { ...short, data: [short.data[0].slice(0, -8), 'base64'] as const },
-    })
-    await expect(readPlan(reader, SOMEWHERE)).rejects.toThrow(/bytes/)
-  })
-})
-
 type SentTransaction = { wire: string; skipPreflight: boolean | undefined }
 
 function chargeRpc(behaviour: {
@@ -598,16 +530,14 @@ describe('describe*', () => {
   })
 })
 
-describe('PlanReaderRpc', () => {
-  it('справжній клієнт мережі відповідає типу читача плану', () => {
+describe('ChargeRpc', () => {
+  it('справжній клієнт мережі відповідає типу відправника', () => {
     const client = createChainClient({
       cluster: 'devnet',
       rpcUrl: 'https://api.devnet.solana.com',
       usdcMint: MINT,
     })
-    const reader: PlanReaderRpc = client.rpc
     const sender: ChargeRpc = client.rpc
-    expect(typeof reader.getAccountInfo).toBe('function')
     expect(typeof sender.sendTransaction).toBe('function')
   })
 })

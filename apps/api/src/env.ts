@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { MIN_JWT_SECRET_LENGTH } from './auth.js'
 
 /**
  * Оточення API. Читається з будь-якої мапи рядків, а не напряму з `process.env`,
@@ -58,6 +59,19 @@ export const apiConfigSchema = z.object({
    * дані публічні, але «кому завгодно» — це не конфігурація, а її відсутність.
    */
   corsOrigins: z.array(originSchema).default([]),
+  /**
+   * Секрет підпису токенів мерчанта. Порожній рядок — «не налаштовано», і
+   * схема цього не забороняє навмисно: вимога живе в `merchantAuthConfig`,
+   * як і вимога пулера в `assertPooledDatabase`. Інакше кожен тест
+   * конфігурації змушений був би вигадувати секрет, до якого йому байдуже.
+   */
+  jwtSecret: z.string().default(''),
+  /**
+   * Домен, за який відповідає ця інсталяція, — рівно той рядок, який людина
+   * бачить у вікні гаманця і який їде в підписаному повідомленні. Не URL:
+   * `https://` і шлях у підписі SIWS не пишуться.
+   */
+  authDomain: z.string().default(''),
 })
 
 export type ApiConfig = z.infer<typeof apiConfigSchema>
@@ -94,6 +108,48 @@ export function assertPooledDatabase(config: ApiConfig): void {
   if (port !== String(POOLER_PORT)) throw new DirectDatabaseConnectionError(port ?? '')
 }
 
+export class MerchantAuthNotConfiguredError extends Error {
+  constructor(detail: string) {
+    super(
+      `merchant sign-in is not configured: ${detail}. Set JWT_SECRET ` +
+        `(at least ${MIN_JWT_SECRET_LENGTH} characters) and AUTH_DOMAIN ` +
+        '(the domain the wallet shows, e.g. localhost:8879).',
+    )
+    this.name = 'MerchantAuthNotConfiguredError'
+  }
+}
+
+/** Схема домену входу: хост і, за потреби, порт. Ані схеми, ані шляху. */
+const AUTH_DOMAIN = /^[a-z0-9.-]+(:\d{1,5})?$/i
+
+export type MerchantAuthConfig = {
+  jwtSecret: string
+  domain: string
+}
+
+/**
+ * Секрет і домен або названа відмова при старті. Та сама логіка, що й у
+ * `assertPooledDatabase`: конфігурація, зламана мовчки, проявляється далеко
+ * від причини — тут це був би `401` на чесному підписі.
+ */
+export function merchantAuthConfig(config: ApiConfig): MerchantAuthConfig {
+  if (config.jwtSecret.length < MIN_JWT_SECRET_LENGTH) {
+    throw new MerchantAuthNotConfiguredError(
+      config.jwtSecret === ''
+        ? 'JWT_SECRET is empty'
+        : `JWT_SECRET is ${config.jwtSecret.length} characters long`,
+    )
+  }
+  if (!AUTH_DOMAIN.test(config.authDomain)) {
+    throw new MerchantAuthNotConfiguredError(
+      config.authDomain === ''
+        ? 'AUTH_DOMAIN is empty'
+        : `AUTH_DOMAIN is ${JSON.stringify(config.authDomain)}, which is not a bare domain`,
+    )
+  }
+  return { jwtSecret: config.jwtSecret, domain: config.authDomain }
+}
+
 function boolFromEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined
   return value === 'true' || value === '1'
@@ -106,5 +162,7 @@ export function apiConfigFromEnv(env: Record<string, string | undefined>): ApiCo
     logLevel: env.LOG_LEVEL,
     allowDirectDatabase: boolFromEnv(env.ALLOW_DIRECT_DATABASE),
     corsOrigins: originsFromEnv(env.CORS_ORIGINS),
+    jwtSecret: env.JWT_SECRET,
+    authDomain: env.AUTH_DOMAIN,
   })
 }
