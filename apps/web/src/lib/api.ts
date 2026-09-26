@@ -1,7 +1,8 @@
-import type { Address, ErrorCode } from '@cancelchain/shared'
+import type { Address, ErrorCode, PlanView } from '@cancelchain/shared'
 import {
   apiErrorSchema,
   getAllowanceResponseSchema,
+  getPlanViewResponseSchema,
   latestBlockhashResponseSchema,
   listAllowancesResponseSchema,
   listSignaturesResponseSchema,
@@ -82,6 +83,12 @@ export interface ApiClient {
    * доїхати, не забравши з собою п'ять полів `FR-002`.
    */
   listSignatures(pda: string, limit?: number, signal?: AbortSignal): Promise<ListSignaturesResponse>
+  /**
+   * The plan behind the subscribe screen (`T036`). With a `subscriber`, the
+   * answer also carries that wallet's side: its authority, its token account,
+   * and whether it is already subscribed.
+   */
+  getPlan(pda: string, subscriber: string | null, signal?: AbortSignal): Promise<PlanView>
 }
 
 /** Мінімум від `fetch`, потрібний клієнтові. Вужче — щоб тест не підробляв усе. */
@@ -145,6 +152,14 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
           limit === undefined ? '' : `?limit=${limit}`
         }`,
         listSignaturesResponseSchema,
+        signal,
+      ),
+    getPlan: (pda, subscriber, signal) =>
+      get(
+        `/v1/plans/${encodeURIComponent(pda)}${
+          subscriber === null ? '' : `?subscriber=${encodeURIComponent(subscriber)}`
+        }`,
+        getPlanViewResponseSchema,
         signal,
       ),
   }

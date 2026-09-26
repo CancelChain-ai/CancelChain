@@ -5,12 +5,13 @@ import {
   readAllowance,
   readAllowances,
   readPlan,
+  readSubscriberState,
   toAddress,
   verifyWalletSignature,
 } from '@cancelchain/chain'
 import { allowances, indexerCursor, plans } from '@cancelchain/db'
 import type { Allowance, Plan } from '@cancelchain/shared'
-import { allowanceSchema, toU64 } from '@cancelchain/shared'
+import { allowanceSchema, fromU64, planSchema, toU64 } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
 import { desc, eq } from 'drizzle-orm'
 import { createApp } from './app.js'
@@ -75,6 +76,25 @@ async function savePlan(db: Db, plan: Plan): Promise<void> {
     .onConflictDoUpdate({ target: plans.pda, set: fields })
 }
 
+/**
+ * The catalog row for a plan, or `null`. Throws when storage cannot be reached —
+ * the route turns that into `catalog: unavailable`, not into "no row".
+ *
+ * `created_at` comes back from Postgres as `2026-09-21 10:00:00+00`, not as ISO
+ * 8601, so it is normalised here; the shared schema would refuse the raw form.
+ */
+async function catalogPlan(db: Db, pda: string): Promise<Plan | null> {
+  const rows = await db.select().from(plans).where(eq(plans.pda, pda)).limit(1)
+  const row = rows[0]
+  if (row === undefined) return null
+  return planSchema.parse({
+    ...row,
+    planId: fromU64(row.planId),
+    amount: fromU64(row.amount),
+    createdAt: new Date(row.createdAt).toISOString(),
+  })
+}
+
 function main(): void {
   const startedAt = Date.now()
   const config = apiConfigFromEnv(process.env)
@@ -120,6 +140,22 @@ function main(): void {
           signature: input.signature,
           message: input.message,
         }),
+    },
+    plans: {
+      plan: (pda) => readPlan(chain.rpc, toAddress(pda), { commitment: 'confirmed' }),
+      catalog: (pda) => catalogPlan(database.db, pda),
+      settlementMint: chain.usdcMint,
+      subscriber: async ({ subscriber, plan }) => {
+        const state = await readSubscriberState(
+          chain.rpc,
+          { subscriber, planPda: plan.pda, mint: plan.mint },
+          { commitment: 'confirmed' },
+        )
+        return {
+          ...state,
+          authorityInitId: state.authorityInitId === null ? null : fromU64(state.authorityInitId),
+        }
+      },
     },
     blockhash: {
       // `confirmed`, як і слот у `/health`: `finalized` дав би хеш на пів

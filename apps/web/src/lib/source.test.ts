@@ -53,6 +53,7 @@ function clientReturning(response: ListAllowancesResponse): ApiClient {
     getAllowance: () => Promise.reject(new Error('the list tests do not ask for one allowance')),
     getBlockhash: () => Promise.reject(new Error('the list tests do not build a transaction')),
     listSignatures: () => Promise.reject(new Error('the list tests do not ask for history')),
+    getPlan: () => Promise.reject(new Error('the list tests do not read a plan')),
   }
 }
 
@@ -193,6 +194,7 @@ function cardClient(answer: () => Promise<GetAllowanceResponse>): ApiClient {
     getAllowance: answer,
     getBlockhash: () => Promise.reject(new Error('the card tests do not build a transaction')),
     listSignatures: () => Promise.reject(new Error('these tests ask for history explicitly')),
+    getPlan: () => Promise.reject(new Error('the card tests do not read a plan')),
   }
 }
 
@@ -278,6 +280,7 @@ describe('the history behind one allowance', () => {
       getAllowance: () => Promise.reject(new Error('the history tests do not ask for the card')),
       getBlockhash: () => Promise.reject(new Error('the history tests do not build a transaction')),
       listSignatures: () => Promise.resolve(response),
+      getPlan: () => Promise.reject(new Error('the history tests do not read a plan')),
     }
   }
 

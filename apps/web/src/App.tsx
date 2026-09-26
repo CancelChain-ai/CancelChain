@@ -8,8 +8,9 @@ import { mockData, source } from './lib/source'
 import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
 import { useHistory } from './lib/useHistory'
+import { useSubscribeReview } from './lib/useSubscribeReview'
 import Merchant from './pages/Merchant'
-import Subscribe from './pages/Subscribe'
+import Subscribe, { LiveSubscribe } from './pages/Subscribe'
 import Subscription from './pages/Subscription'
 import Subscriptions from './pages/Subscriptions'
 
@@ -29,11 +30,26 @@ const TABS: { id: View; label: string }[] = [
  * людина дивиться на конкретну сторінку. Перелік скорочується з кожною
  * задачею — `T024` зняв `detail`, `T036` зніме `subscribe`, `T052` — `merchant`.
  */
-const MOCK_ONLY_VIEWS: View[] = ['subscribe', 'merchant']
+const MOCK_ONLY_VIEWS: View[] = ['merchant']
+
+/**
+ * The plan a subscribe link points at: `?plan=<address>`. A merchant's link
+ * (`FR-014`) opens the subscribe screen with it; the address is checked by the
+ * API, not here.
+ */
+const PLAN_PARAM = 'plan'
+
+function planFromLocation(): string | null {
+  const value = new URLSearchParams(window.location.search).get(PLAN_PARAM)
+  return value === null || value.trim() === '' ? null : value.trim()
+}
 
 const App = () => {
   const { cluster } = useWalletEnvironment()
-  const [view, setView] = useState<View>('subscriptions')
+  const [planPda, setPlanPda] = useState<string | null>(planFromLocation)
+  const [view, setView] = useState<View>(() =>
+    planFromLocation() === null ? 'subscriptions' : 'subscribe',
+  )
   const [selectedId, setSelectedId] = useState<string | null>(null)
   /**
    * Мок M0 змінюється кліками, і список читає його через те саме джерело, що й
@@ -52,6 +68,14 @@ const App = () => {
    * право не доїхати, не забравши з собою п'ять полів `FR-002`.
    */
   const history = useHistory(selectedId)
+  const subscribeReview = useSubscribeReview(planPda, owner)
+
+  const openPlan = (pda: string) => {
+    setPlanPda(pda)
+    const url = new URL(window.location.href)
+    url.searchParams.set(PLAN_PARAM, pda)
+    window.history.replaceState(null, '', url)
+  }
 
   const update = (id: string, change: (permission: Permission) => Permission) => {
     mockData.update(id, change)
@@ -206,13 +230,16 @@ const App = () => {
             />
           ))}
 
-        {view === 'subscribe' && (
-          <Subscribe
-            onDone={() => setView('subscriptions')}
-            onAllow={allowPlan}
-            alreadyGiven={planAllowed}
-          />
-        )}
+        {view === 'subscribe' &&
+          (source.plans === null ? (
+            <Subscribe
+              onDone={() => setView('subscriptions')}
+              onAllow={allowPlan}
+              alreadyGiven={planAllowed}
+            />
+          ) : (
+            <LiveSubscribe state={subscribeReview} onOpenPlan={openPlan} />
+          ))}
 
         {view === 'merchant' && <Merchant />}
       </main>

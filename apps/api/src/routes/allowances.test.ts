@@ -99,6 +99,16 @@ function app(allowances: Partial<AppDeps['allowances']> = {}) {
       save: async () => {},
       verifySignature: async () => false,
     },
+    plans: {
+      plan: async () => {
+        throw new Error('the plan route takes no part in these checks')
+      },
+      catalog: async () => null,
+      settlementMint: 'So11111111111111111111111111111111111111112',
+      subscriber: async () => {
+        throw new Error('the plan route takes no part in these checks')
+      },
+    },
     blockhash: {
       latestBlockhash: async () => ({
         blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',

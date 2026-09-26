@@ -1,6 +1,6 @@
 import type { RevokeLifetime } from '@cancelchain/chain'
 import { toBlockhash } from '@cancelchain/chain'
-import type { Address, UnreadableAllowanceItem } from '@cancelchain/shared'
+import type { Address, PlanView, UnreadableAllowanceItem } from '@cancelchain/shared'
 import {
   type ApiClient,
   ApiRequestError,
@@ -98,6 +98,14 @@ export interface AllowanceSource {
    * зникати разом з нею, коли вона не доїде.
    */
   getHistory(id: string, signal?: AbortSignal): Promise<AddressHistoryView | null>
+  /**
+   * The plan behind the subscribe screen (`T036`). `null` for the source itself —
+   * the mock has no network, and its subscribe screen stays the M0 prototype.
+   * The read answers `null` when there is no plan at that address.
+   */
+  readonly plans: {
+    get(pda: string, subscriber: string | null, signal?: AbortSignal): Promise<PlanView | null>
+  } | null
 }
 
 export class WalletRequiredError extends Error {
@@ -154,6 +162,7 @@ export function createMockSource(): AllowanceSource {
     // Мережі за моком немає, тож і історії адреси немає: вигадана стрічка
     // приїжджає в самій картці (`detail.activity`).
     getHistory: () => Promise.resolve(null),
+    plans: null,
   }
 }
 
@@ -218,6 +227,17 @@ export function createApiSource(client: ApiClient): AllowanceSource {
     },
     async getHistory(id, signal) {
       return historyFromSignatures(await client.listSignatures(id, undefined, signal))
+    },
+    plans: {
+      async get(pda, subscriber, signal) {
+        try {
+          return await client.getPlan(pda, subscriber, signal)
+        } catch (error) {
+          // The same boundary as the card: "no plan at this address" is an answer.
+          if (error instanceof ApiRequestError && error.code === 'NOT_FOUND') return null
+          throw error
+        }
+      },
     },
   }
 }

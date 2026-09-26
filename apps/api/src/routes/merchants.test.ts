@@ -77,6 +77,14 @@ function app(overrides: Partial<MerchantsDeps> = {}) {
       history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
     },
     merchants,
+    plans: {
+      plan: async () => snapshot(),
+      catalog: async () => null,
+      settlementMint: MINT,
+      subscriber: async () => {
+        throw new Error('the plan route takes no part in these checks')
+      },
+    },
     blockhash: {
       latestBlockhash: async () => ({
         blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N',

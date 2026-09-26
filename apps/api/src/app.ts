@@ -7,6 +7,7 @@ import { type AllowancesDeps, allowanceRoute, allowancesRoute } from './routes/a
 import { type BlockhashDeps, blockhashRoute } from './routes/blockhash.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
 import { type MerchantsDeps, merchantPlansRoute, merchantSignInRoute } from './routes/merchants.js'
+import { type PlansDeps, plansRoute } from './routes/plans.js'
 import { type SignaturesDeps, signaturesRoute } from './routes/signatures.js'
 import type { AppEnv } from './types.js'
 
@@ -17,6 +18,7 @@ export type AppDeps = {
   blockhash: BlockhashDeps
   signatures: SignaturesDeps
   merchants: MerchantsDeps
+  plans: PlansDeps
   rateLimit?: RateLimitOptions
   /**
    * Origin-и браузерів, яким можна читати `/v1` з іншого хоста (сторінка на
@@ -65,6 +67,7 @@ export function createApp(deps: AppDeps) {
     .route('/', blockhashRoute(deps.blockhash))
     .route('/', merchantSignInRoute(deps.merchants))
     .route('/', merchantPlansRoute(deps.merchants))
+    .route('/', plansRoute(deps.plans))
 }
 
 export type App = ReturnType<typeof createApp>
