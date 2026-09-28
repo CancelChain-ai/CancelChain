@@ -80,6 +80,22 @@ export function walletSigningSupport(wallet: UiWallet): SigningSupport {
   return 'none'
 }
 
+/**
+ * What the **connected** account's wallet can do. Asked of the wallet, not the
+ * account: `WalletAccount.features` exists in the standard too, but not every
+ * wallet fills it, and an empty list there would read as "cannot sign" for a
+ * wallet that can.
+ */
+export function accountSigningSupport(
+  account: UiWalletAccount,
+  wallets: readonly UiWallet[],
+): SigningSupport {
+  const wallet = wallets.find((candidate) =>
+    candidate.accounts.some((candidateAccount) => candidateAccount.address === account.address),
+  )
+  return wallet === undefined ? 'none' : walletSigningSupport(wallet)
+}
+
 export function walletCanDisconnect(wallet: UiWallet): boolean {
   return wallet.features.includes(StandardDisconnect)
 }

@@ -1,5 +1,12 @@
-import type { Address, Instruction } from '@solana/kit'
-import { createNoopSigner, getBase64Decoder } from '@solana/kit'
+import type { Address, Blockhash, Instruction } from '@solana/kit'
+import {
+  createNoopSigner,
+  decompileTransactionMessage,
+  getBase64Decoder,
+  getCompiledTransactionMessageDecoder,
+  getTransactionDecoder,
+  getTransactionEncoder,
+} from '@solana/kit'
 import {
   AccountDiscriminator,
   getRevokeSubscriptionAuthorityOverlayInstructionAsync,
@@ -18,6 +25,7 @@ import type { PlanReaderRpc } from './plan.js'
 import {
   buildSubscribeInstruction,
   buildSubscribeInstructions,
+  buildSubscribeTransaction,
   findAssociatedTokenAccount,
   MintNotFoundError,
   NotAnAuthorityError,
@@ -412,5 +420,114 @@ describe('readSubscriberState', () => {
     await expect(
       readSubscriberState(rpc, { subscriber: SUBSCRIBER, planPda: PLAN.pda, mint: MINT }),
     ).rejects.toThrow(MintNotFoundError)
+  })
+})
+
+const LIFETIME = {
+  blockhash: 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N' as Blockhash,
+  lastValidBlockHeight: 492_096_495n,
+}
+
+type PlainAccount = { address: Address; role: number }
+
+/** Accounts without the noop signer: the shape that crosses the wire and comes back. */
+function plainAccounts(instruction: Instruction): PlainAccount[] {
+  return (instruction.accounts ?? []).map(({ address, role }) => ({ address, role }))
+}
+
+const withInit = () =>
+  buildSubscribeInstructions({
+    plan: PLAN,
+    subscriber,
+    now: NOW,
+    authorityInitId: 'same-transaction',
+    initAuthority: { tokenProgram: TOKEN_PROGRAM, userAta: USER_ATA },
+  })
+
+describe('buildSubscribeTransaction — the transaction under one signature', () => {
+  it('compiled → decompiled: the same instructions, the subscriber pays, the same lifetime', async () => {
+    const instructions = await withInit()
+    const built = buildSubscribeTransaction({ instructions, lifetime: LIFETIME })
+    const compiled = getCompiledTransactionMessageDecoder().decode(built.transaction.messageBytes)
+    const back = decompileTransactionMessage(compiled, {
+      lastValidBlockHeight: LIFETIME.lastValidBlockHeight,
+    })
+
+    expect(back.version).toBe(0)
+    expect(back.feePayer.address).toBe(SUBSCRIBER)
+    expect(back.lifetimeConstraint).toEqual(LIFETIME)
+    expect(back.instructions).toHaveLength(instructions.length)
+    /*
+     * A message holds one role per address, the widest any instruction asked
+     * for: the authority is writable in its init and read-only in subscribe,
+     * and the compiled transaction carries it writable in both. So the check is
+     * "same addresses, same order, each role the transaction-wide widest" — a
+     * role narrowed by compiling would fail it, and so would a widened one that
+     * no instruction asked for.
+     */
+    const widest = new Map<Address, number>()
+    for (const account of instructions.flatMap(plainAccounts)) {
+      widest.set(account.address, Math.max(widest.get(account.address) ?? 0, account.role))
+    }
+    back.instructions.forEach((returned, index) => {
+      const source = instructions[index]
+      if (source === undefined) throw new Error('an instruction went missing')
+      expect(returned.programAddress).toBe(source.programAddress)
+      expect(returned.data).toEqual(source.data)
+      expect(plainAccounts(returned)).toEqual(
+        plainAccounts(source).map(({ address }) => ({ address, role: widest.get(address) })),
+      )
+    })
+    // What the screen decodes from the compiled bytes is what it decoded before compiling.
+    expect(readSubscribeBounds(back.instructions)).toEqual(readSubscribeBounds(instructions))
+    expect(built.bounds).toEqual(readSubscribeBounds(instructions))
+  })
+
+  it("exactly one signature slot, the subscriber's, left empty for the wallet", async () => {
+    const { transaction } = buildSubscribeTransaction({
+      instructions: await withInit(),
+      lifetime: LIFETIME,
+    })
+    expect(Object.keys(transaction.signatures)).toEqual([SUBSCRIBER])
+    expect(transaction.signatures[SUBSCRIBER]).toBeNull()
+  })
+
+  it('bytes → transaction → the same message and the same empty signature', async () => {
+    const built = buildSubscribeTransaction({
+      instructions: [await subscribe()],
+      lifetime: LIFETIME,
+    })
+    const decoded = getTransactionDecoder().decode(built.wireTransaction)
+    const back = decompileTransactionMessage(
+      getCompiledTransactionMessageDecoder().decode(decoded.messageBytes),
+      { lastValidBlockHeight: LIFETIME.lastValidBlockHeight },
+    )
+    const [source] = built.message.instructions
+    const [returned] = back.instructions
+    if (source === undefined || returned === undefined) throw new Error('no instruction')
+    // One instruction: nothing to merge with, so every role comes back exactly.
+    expect(plainAccounts(returned)).toEqual(plainAccounts(source))
+    expect(decoded.messageBytes).toEqual(built.transaction.messageBytes)
+    expect(decoded.signatures).toEqual(built.transaction.signatures)
+    expect(built.wireTransaction).toEqual(getTransactionEncoder().encode(built.transaction))
+    expect(Buffer.from(built.wireTransaction).toString('base64')).toBe(built.wireTransactionBase64)
+  })
+
+  it('refuses a passenger: an instruction of another program never reaches a wallet', async () => {
+    const passenger: Instruction = {
+      programAddress: TOKEN_PROGRAM,
+      accounts: [],
+      data: new Uint8Array([1]),
+    }
+    const instructions = [await subscribe(), passenger]
+    expect(() => buildSubscribeTransaction({ instructions, lifetime: LIFETIME })).toThrow(
+      SubscribeBoundsError,
+    )
+  })
+
+  it('refuses a transaction with no subscribe in it', () => {
+    expect(() => buildSubscribeTransaction({ instructions: [], lifetime: LIFETIME })).toThrow(
+      SubscribeBoundsError,
+    )
   })
 })

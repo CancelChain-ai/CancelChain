@@ -1,7 +1,7 @@
 import { readSubscribeBounds, subscribeBoundsAsPlanTerms } from '@cancelchain/chain'
 import type { PlanSubscriber, PlanView } from '@cancelchain/shared'
 import { describe, expect, it } from 'vitest'
-import { reviewSubscription } from './subscribeReview'
+import { recheckOffer, reviewSubscription } from './subscribeReview'
 
 /** The devnet plan from `T034`, as `GET /v1/plans/:pda` returns it. */
 const PLAN = 'EwH6mqofjSWnzLRaMraBneQx3MyKsjqCfz2tREZUM2mg'
@@ -176,5 +176,65 @@ describe('reviewSubscription', () => {
     const review = await reviewSubscription(view({ assetSupported: false }), NOW)
     expect(review.terms.perPeriod.decimals).toBeNull()
     expect(review.terms.perPeriod.label).not.toBe('USDC')
+  })
+})
+
+describe('recheckOffer — the plan read again between the click and the wallet', () => {
+  it('the same plan gives the same offer, and the shown instructions are the ones signed', async () => {
+    const shown = await reviewSubscription(view(), NOW)
+    const fresh = await reviewSubscription(view({ syncedAt: '2026-09-26T12:03:00.000Z' }), NOW)
+    const recheck = recheckOffer(shown, fresh)
+    expect(recheck.status).toBe('same')
+    if (recheck.status !== 'same') throw new Error('unreachable')
+    expect(recheck.transaction.instructions).toBe(shown.transaction?.instructions)
+  })
+
+  it('a changed amount, period or plan version stops before the wallet', async () => {
+    const shown = await reviewSubscription(view(), NOW)
+    for (const change of [
+      { amount: '9990001' },
+      { periodSeconds: 3_600 },
+      { createdAt: '2026-09-22T00:00:00.000Z' },
+    ]) {
+      const fresh = await reviewSubscription(view({}, change), NOW)
+      expect(recheckOffer(shown, fresh)).toEqual({ status: 'changed' })
+    }
+  })
+
+  it('terms outside the transaction count too: the screen showed them', async () => {
+    const shown = await reviewSubscription(view(), NOW)
+    const pullers = await reviewSubscription(view({}, { pullers: [MERCHANT, SUBSCRIBER] }), NOW)
+    const endsAt = await reviewSubscription(view({}, { endsAt: '2027-01-01T00:00:00.000Z' }), NOW)
+    expect(recheckOffer(shown, pullers)).toEqual({ status: 'changed' })
+    expect(recheckOffer(shown, endsAt)).toEqual({ status: 'changed' })
+  })
+
+  it('an authority created in between changes the transaction, not only the terms', async () => {
+    const shown = await reviewSubscription(
+      view({ subscriber: { ...SUBSCRIBER_STATE, authorityInitId: null } }),
+      NOW,
+    )
+    const fresh = await reviewSubscription(view(), NOW)
+    expect(shown.transaction?.initsAuthority).toBe(true)
+    expect(recheckOffer(shown, fresh)).toEqual({ status: 'changed' })
+  })
+
+  it('already subscribed, or a plan gone, is an answer and not a signature', async () => {
+    const shown = await reviewSubscription(view(), NOW)
+    const subscribed = await reviewSubscription(
+      view({ subscriber: { ...SUBSCRIBER_STATE, subscribed: true } }),
+      NOW,
+    )
+    expect(recheckOffer(shown, subscribed)).toEqual({
+      status: 'blocked',
+      block: { reason: 'subscribed', subscription: SUBSCRIBER_STATE.subscription },
+    })
+    expect(recheckOffer(shown, null)).toEqual({ status: 'missing' })
+  })
+
+  it('an offer that was never signable is not made signable by a re-read', async () => {
+    const shown = await reviewSubscription(view({ subscriber: null }), NOW)
+    const fresh = await reviewSubscription(view(), NOW)
+    expect(recheckOffer(shown, fresh)).toEqual({ status: 'changed' })
   })
 })

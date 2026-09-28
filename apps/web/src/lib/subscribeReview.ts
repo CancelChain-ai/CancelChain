@@ -203,3 +203,61 @@ export async function reviewSubscription(
     syncedAt: new Date(view.syncedAt),
   }
 }
+
+/**
+ * The check between the click and the wallet (`T037`).
+ *
+ * The screen may have been open for minutes, and the merchant may have changed
+ * or deleted the plan in that time. So the plan is read again and the offer
+ * rebuilt; only if it is **the same offer** — the same decoded bounds, and the
+ * same terms outside the transaction that the screen also showed — does the
+ * transaction the person looked at go to the wallet. Anything else stops before
+ * the signature and the screen shows the fresh state instead.
+ */
+export type OfferRecheck =
+  | { status: 'same'; transaction: SubscribeTransaction }
+  /** The plan is gone from the network. */
+  | { status: 'missing' }
+  /** Nothing can be signed any more, and the reason is a block (e.g. already subscribed). */
+  | { status: 'blocked'; block: ReviewBlock }
+  /** Something the screen showed is no longer true. */
+  | { status: 'changed' }
+
+function sameBounds(a: SubscribeBounds, b: SubscribeBounds): boolean {
+  return (
+    a.plan === b.plan &&
+    a.merchant === b.merchant &&
+    a.subscriber === b.subscriber &&
+    a.subscription === b.subscription &&
+    a.planId === b.planId &&
+    a.mint === b.mint &&
+    a.amount === b.amount &&
+    a.periodHours === b.periodHours &&
+    a.createdAt === b.createdAt &&
+    a.authorityInitId === b.authorityInitId &&
+    a.initsAuthority === b.initsAuthority
+  )
+}
+
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index])
+}
+
+export function recheckOffer(shown: SubscribeReview, fresh: SubscribeReview | null): OfferRecheck {
+  if (fresh === null) return { status: 'missing' }
+  if (fresh.blocked !== null) return { status: 'blocked', block: fresh.blocked }
+  const before = shown.transaction
+  const now = fresh.transaction
+  if (before === null || now === null) return { status: 'changed' }
+  if (
+    !sameBounds(before.bounds, now.bounds) ||
+    !sameList(shown.pullers, fresh.pullers) ||
+    !sameList(shown.destinations, fresh.destinations) ||
+    shown.endsAt?.getTime() !== fresh.endsAt?.getTime()
+  ) {
+    return { status: 'changed' }
+  }
+  // The instructions the person looked at, not the rebuilt ones: equal bounds
+  // make them the same offer, and what was shown is what gets signed.
+  return { status: 'same', transaction: before }
+}

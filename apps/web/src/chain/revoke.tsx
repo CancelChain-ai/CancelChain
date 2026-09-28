@@ -8,7 +8,7 @@ import { type ReactNode, useCallback, useRef, useState } from 'react'
 import { describeFailure } from '../lib/api'
 import { source } from '../lib/source'
 import { useWalletEnvironment } from './WalletProvider'
-import { useWalletConnection, walletAccountAddress, walletSigningSupport } from './wallet'
+import { accountSigningSupport, useWalletConnection, walletAccountAddress } from './wallet'
 
 /**
  * Потік скасування — `FR-003`, `FR-019`, `FR-026`, і `SC-002` міряє саме його.
@@ -187,15 +187,8 @@ export const CancelFlow = ({ children }: { children: (controls: CancelControls) 
   if (account === undefined) {
     return <>{children(unavailableControls('Connect a wallet to cancel a permission.'))}</>
   }
-  /*
-   * Здатність питаємо в **гаманця**, а не в акаунта: `WalletAccount.features` за
-   * стандартом теж існує, але заповнюють його не всі, і порожній перелік там
-   * означав би «підписувати не вміє» для гаманця, який уміє.
-   */
-  const wallet = wallets.find((candidate) =>
-    candidate.accounts.some((candidateAccount) => candidateAccount.address === account.address),
-  )
-  const signing = wallet === undefined ? 'none' : walletSigningSupport(wallet)
+  // Asked of the wallet, not the account — see `accountSigningSupport`.
+  const signing = accountSigningSupport(account, wallets)
   if (signing !== 'sign-and-send') {
     return (
       <>

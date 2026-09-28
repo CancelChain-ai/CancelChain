@@ -2,13 +2,15 @@
 import type { PlanSubscriber, PlanView } from '@cancelchain/shared'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import type { SubscribeControls, SubscribeState } from '../chain/subscribe'
 import { reviewSubscription } from '../lib/subscribeReview'
 import { LiveSubscribe } from './Subscribe'
 
 /**
  * The live subscribe screen (`T036`, `FR-008`): the terms under "What you are
  * signing" come out of the built instructions, a disagreement with the
- * merchant's listing is spelled out, and nothing claims to be signed.
+ * merchant's listing is spelled out. `T037`: one click hands the reviewed offer
+ * to the flow, and every state of the flow is said in words.
  */
 
 const PLAN = 'EwH6mqofjSWnzLRaMraBneQx3MyKsjqCfz2tREZUM2mg'
@@ -63,11 +65,37 @@ function view(over: Partial<PlanView> = {}): PlanView {
   }
 }
 
-async function renderReview(over: Partial<PlanView> = {}) {
+function controlsWith(over: Partial<SubscribeControls> = {}): SubscribeControls {
+  return {
+    state: { status: 'idle' },
+    subscribe: vi.fn(),
+    unavailable: null,
+    dismiss: () => {},
+    ...over,
+  }
+}
+
+const explorerUrl = (signature: string) => `https://explorer.test/tx/${signature}`
+
+async function renderReview(
+  over: Partial<PlanView> = {},
+  controls: SubscribeControls = controlsWith(),
+  onDone: () => void = () => {},
+) {
   const review = await reviewSubscription(view(over), NOW)
-  render(<LiveSubscribe state={{ status: 'ready', review }} onOpenPlan={() => {}} />)
+  render(
+    <LiveSubscribe
+      state={{ status: 'ready', review }}
+      onOpenPlan={() => {}}
+      controls={controls}
+      onDone={onDone}
+      explorerUrl={explorerUrl}
+    />,
+  )
   return review
 }
+
+const allowButton = () => screen.getByRole('button', { name: 'Allow this' }) as HTMLButtonElement
 
 afterEach(cleanup)
 
@@ -115,16 +143,84 @@ describe('LiveSubscribe', () => {
     expect(screen.getByRole('status').textContent).toContain('Connect a wallet')
   })
 
-  it('never offers a live signature from this screen yet', async () => {
-    await renderReview()
-    const button = screen.getByRole('button', { name: 'Allow this' }) as HTMLButtonElement
-    expect(button.disabled).toBe(true)
-    expect(screen.getByText(/nothing is sent from here/)).toBeTruthy()
+  it('one click hands exactly the reviewed offer to the flow', async () => {
+    const controls = controlsWith()
+    const review = await renderReview({}, controls)
+    expect(allowButton().disabled).toBe(false)
+    fireEvent.click(allowButton())
+    expect(controls.subscribe).toHaveBeenCalledTimes(1)
+    expect(controls.subscribe).toHaveBeenCalledWith(review)
+    expect(screen.getByText(/One signature, in your wallet/)).toBeTruthy()
+  })
+
+  it('a blocked offer is not signable even with a wallet that can sign', async () => {
+    const controls = controlsWith()
+    await renderReview({ subscriber: { ...SUBSCRIBER, subscribed: true } }, controls)
+    expect(allowButton().disabled).toBe(true)
+    fireEvent.click(allowButton())
+    expect(controls.subscribe).not.toHaveBeenCalled()
+  })
+
+  it('without signing, the button is off and the reason is said', async () => {
+    await renderReview(
+      {},
+      controlsWith({ subscribe: null, unavailable: 'Connect a wallet to subscribe.' }),
+    )
+    expect(allowButton().disabled).toBe(true)
+    expect(screen.getByText('Connect a wallet to subscribe.')).toBeTruthy()
+  })
+
+  it('while the flow runs, the button is off and the step is named', async () => {
+    const controls = controlsWith({ state: { status: 'working', step: 'confirming' } })
+    await renderReview({}, controls)
+    expect(allowButton().disabled).toBe(true)
+    expect(screen.getByText(/Waiting for the network to show the subscription/)).toBeTruthy()
+  })
+
+  it('a plan that changed before the wallet says nothing was sent', async () => {
+    const stopped: SubscribeState = { status: 'stopped', reason: 'changed' }
+    await renderReview({}, controlsWith({ state: stopped }))
+    const alert = screen.getAllByRole('alert').at(-1)
+    expect(alert?.textContent).toContain('nothing was sent to your wallet')
+  })
+
+  it('a confirmed subscription says so, links the transaction, and leads to the list', async () => {
+    const onDone = vi.fn()
+    const done: SubscribeState = {
+      status: 'done',
+      subscription: SUBSCRIBER.subscription,
+      signature: '5xSig111111111111111111111111111111111111111111111111111111111111',
+    }
+    await renderReview({}, controlsWith({ state: done }), onDone)
+    expect(screen.getByText('Permission given')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Allow this' })).toBeNull()
+    expect(screen.getByRole('link').getAttribute('href')).toBe(explorerUrl(done.signature))
+    fireEvent.click(screen.getByRole('button', { name: 'See it in my subscriptions' }))
+    expect(onDone).toHaveBeenCalledTimes(1)
+  })
+
+  it('sent but not seen is not called a success', async () => {
+    const unconfirmed: SubscribeState = {
+      status: 'unconfirmed',
+      subscription: SUBSCRIBER.subscription,
+      signature: '5xSig111111111111111111111111111111111111111111111111111111111111',
+    }
+    await renderReview({}, controlsWith({ state: unconfirmed }))
+    expect(screen.queryByText('Permission given')).toBeNull()
+    expect(screen.getByText('Sent, not seen yet')).toBeTruthy()
   })
 
   it('a link to a plan that is gone says so, and lets another address be opened', () => {
     const onOpenPlan = vi.fn()
-    render(<LiveSubscribe state={{ status: 'missing', plan: PLAN }} onOpenPlan={onOpenPlan} />)
+    render(
+      <LiveSubscribe
+        state={{ status: 'missing', plan: PLAN }}
+        onOpenPlan={onOpenPlan}
+        controls={controlsWith()}
+        onDone={() => {}}
+        explorerUrl={explorerUrl}
+      />,
+    )
     expect(screen.getByText('There is no plan here')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Plan address'), { target: { value: ` ${PLAN} ` } })
     fireEvent.click(screen.getByRole('button', { name: 'Open' }))

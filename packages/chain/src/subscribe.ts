@@ -1,5 +1,26 @@
-import type { Address, Commitment, Instruction, TransactionSigner } from '@solana/kit'
-import { getAddressEncoder, getBase64Encoder, getProgramDerivedAddress } from '@solana/kit'
+import type {
+  Address,
+  Base64EncodedWireTransaction,
+  Commitment,
+  Instruction,
+  Transaction,
+  TransactionMessageWithBlockhashLifetime,
+  TransactionMessageWithFeePayer,
+  TransactionSigner,
+} from '@solana/kit'
+import {
+  appendTransactionMessageInstruction,
+  compileTransaction,
+  createTransactionMessage,
+  getAddressEncoder,
+  getBase64EncodedWireTransaction,
+  getBase64Encoder,
+  getProgramDerivedAddress,
+  getTransactionEncoder,
+  pipe,
+  setTransactionMessageFeePayer,
+  setTransactionMessageLifetimeUsingBlockhash,
+} from '@solana/kit'
 import {
   AccountDiscriminator,
   getSubscribeOverlayInstructionAsync,
@@ -19,6 +40,7 @@ import {
 } from './grant.js'
 import { findPlan, findSubscription, findSubscriptionAuthority } from './pda.js'
 import type { PlanReaderRpc, PlanSnapshot } from './plan.js'
+import type { RevokeLifetime } from './revoke.js'
 
 /**
  * Subscribing to a merchant's plan — `FR-008`, `T036`.
@@ -325,6 +347,59 @@ export function subscribeBoundsAsPlanTerms(bounds: SubscribeTerms): {
     amount: bounds.amount.toString(10),
     periodSeconds: periodSecondsFromChainHours(bounds.periodHours),
     createdAt,
+  }
+}
+
+export type SubscribeTransactionInput = {
+  /**
+   * The instructions the screen showed — exactly those, not a rebuild. They are
+   * read back with `readSubscribeBounds` here once more, so anything that is not
+   * "optional authority init, then one subscribe" never reaches a wallet.
+   */
+  instructions: readonly Instruction[]
+  lifetime: RevokeLifetime
+  programAddress?: Address
+}
+
+export type SubscribeTransactionMessage = Parameters<typeof compileTransaction>[0] &
+  TransactionMessageWithFeePayer &
+  TransactionMessageWithBlockhashLifetime
+
+export type SubscribeTransaction = {
+  /** The terms the compiled transaction carries, decoded from its instructions. */
+  bounds: SubscribeBounds
+  message: SubscribeTransactionMessage
+  transaction: Transaction
+  /** Bytes for the wallet's `solana:signAndSendTransaction`. */
+  wireTransaction: Uint8Array
+  wireTransactionBase64: Base64EncodedWireTransaction
+}
+
+/**
+ * The subscription transaction — `T037`, `SC-010`: one signature, the
+ * subscriber's.
+ *
+ * The fee payer is the subscriber named **inside** the subscribe instruction,
+ * not a separate argument: a second address here could only ever be a second
+ * signature, and `SC-010` counts one.
+ */
+export function buildSubscribeTransaction(input: SubscribeTransactionInput): SubscribeTransaction {
+  const bounds = readSubscribeBounds(input.instructions, input.programAddress)
+  const message = input.instructions.reduce<SubscribeTransactionMessage>(
+    (carry, instruction) => appendTransactionMessageInstruction(instruction, carry),
+    pipe(
+      createTransactionMessage({ version: 0 }),
+      (draft) => setTransactionMessageFeePayer(bounds.subscriber, draft),
+      (draft) => setTransactionMessageLifetimeUsingBlockhash(input.lifetime, draft),
+    ),
+  )
+  const transaction = compileTransaction(message)
+  return {
+    bounds,
+    message,
+    transaction,
+    wireTransaction: getTransactionEncoder().encode(transaction) as Uint8Array,
+    wireTransactionBase64: getBase64EncodedWireTransaction(transaction),
   }
 }
 

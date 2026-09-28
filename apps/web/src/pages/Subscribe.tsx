@@ -1,5 +1,6 @@
 import type { PlanTermField } from '@cancelchain/shared'
 import { type FormEvent, useState } from 'react'
+import { type SubscribeControls, type SubscribeState, subscribeStepLabel } from '../chain/subscribe'
 import { shortenAddress } from '../chain/wallet'
 import { formatAmount, SUBSCRIBE_OFFER } from '../lib/mockData'
 import type { ReviewBlock, ReviewTerms, SubscribeReview } from '../lib/subscribeReview'
@@ -99,7 +100,7 @@ export default Subscribe
  * The live screen (`T036`, `FR-008`). Everything under "What you are signing"
  * is decoded from the instructions that will be signed (`subscribeReview.ts`);
  * the plan on the network and the merchant's catalog row are only what it is
- * compared with.
+ * compared with. The signature itself is `T037` (`chain/subscribe.tsx`).
  *
  * No colour marks a mismatch: colour here carries consent state only
  * (`tailwind.config.js`). A mismatch is marked by a border and by words.
@@ -172,10 +173,84 @@ const Row = ({ label, value, listed }: { label: string; value: string; listed?: 
   </div>
 )
 
-const Review = ({ review }: { review: SubscribeReview }) => {
+/** Why the flow stopped before the wallet. Nothing was signed in any of these. */
+export function stoppedMessage(state: Extract<SubscribeState, { status: 'stopped' }>): string {
+  switch (state.reason) {
+    case 'changed':
+      return 'The plan changed while this screen was open, so nothing was sent to your wallet. The terms above are the plan as the network holds it now. Check them again.'
+    case 'missing':
+      return 'The plan is gone from the network, so nothing was sent to your wallet.'
+    case 'blocked':
+      return `Nothing was sent to your wallet. ${blockMessage(state.block)}`
+  }
+}
+
+/** The line under the button: what is happening, or why nothing can. */
+function flowNote(controls: SubscribeControls, review: SubscribeReview): string {
+  const { state } = controls
+  if (state.status === 'working') return subscribeStepLabel(state.step)
+  if (state.status === 'stopped') return stoppedMessage(state)
+  if (state.status === 'failed') return state.message
+  if (controls.unavailable !== null) return controls.unavailable
+  if (review.transaction === null)
+    return 'There is nothing to sign until the note above is resolved.'
+  return 'One signature, in your wallet. You keep the money until each charge happens.'
+}
+
+const Given = ({
+  review,
+  state,
+  onDone,
+  explorerUrl,
+}: {
+  review: SubscribeReview
+  state: Extract<SubscribeState, { status: 'done' | 'unconfirmed' }>
+  onDone: () => void
+  explorerUrl: (signature: string) => string | null
+}) => {
+  const url = explorerUrl(state.signature)
+  const confirmed = state.status === 'done'
+  return (
+    <>
+      <h1 className="text-[24px] font-medium leading-tight">
+        {confirmed ? 'Permission given' : 'Sent, not seen yet'}
+      </h1>
+      <p role="status" className="mt-3 text-[14px] leading-relaxed text-ink/70 tnum">
+        {confirmed
+          ? `${shortenAddress(review.merchant)} can now charge up to ${formatMoney(review.terms.perPeriod)} ${everyPeriod(review.terms.periodSeconds)}. The network holds the subscription at ${shortenAddress(state.subscription)}.`
+          : `Your wallet sent the transaction, but the network does not show the subscription at ${shortenAddress(state.subscription)} yet. It may still land, or it may not have. Your subscriptions list reads the network each time it opens.`}
+      </p>
+      {url !== null && (
+        <a
+          href={url}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 block text-[12px] text-ink/55 underline underline-offset-4 tnum"
+        >
+          Transaction {shortenAddress(state.signature, 6)}
+        </a>
+      )}
+      <button
+        type="button"
+        onClick={onDone}
+        className="mt-6 text-[13px] text-ink underline underline-offset-4 transition-opacity duration-150 hover:opacity-70"
+      >
+        See it in my subscriptions
+      </button>
+    </>
+  )
+}
+
+const Review = ({ review, controls }: { review: SubscribeReview; controls: SubscribeControls }) => {
   const signing = review.termsSource === 'transaction'
   const note = catalogNote(review)
   const { listed } = review
+  const { subscribe } = controls
+  const signable =
+    subscribe !== null &&
+    review.transaction !== null &&
+    review.blocked === null &&
+    controls.state.status !== 'working'
 
   return (
     <>
@@ -266,13 +341,25 @@ const Review = ({ review }: { review: SubscribeReview }) => {
 
       <button
         type="button"
-        disabled
-        className="mt-8 w-full cursor-not-allowed rounded-md border border-hairline py-3 text-[14px] text-ink/45"
+        disabled={!signable}
+        onClick={() => {
+          if (signable) subscribe(review)
+        }}
+        className={
+          signable
+            ? 'mt-8 w-full rounded-md border border-ink bg-ink py-3 text-[14px] text-ground transition-opacity duration-150 hover:opacity-90'
+            : 'mt-8 w-full cursor-not-allowed rounded-md border border-hairline py-3 text-[14px] text-ink/45'
+        }
       >
         Allow this
       </button>
-      <p className="mt-3 text-[12px] text-ink/45">
-        Signing is not connected on this screen yet, so nothing is sent from here.
+      <p
+        {...(controls.state.status === 'stopped' || controls.state.status === 'failed'
+          ? { role: 'alert' }
+          : {})}
+        className="mt-3 text-[12px] leading-relaxed text-ink/55"
+      >
+        {flowNote(controls, review)}
       </p>
       <p className="mt-6 text-[11px] text-ink/40 tnum">
         Read from the network at {formatClock(review.syncedAt)}.
@@ -310,9 +397,16 @@ const PlanPicker = ({ onOpen }: { onOpen: (plan: string) => void }) => {
 export const LiveSubscribe = ({
   state,
   onOpenPlan,
+  controls,
+  onDone,
+  explorerUrl,
 }: {
   state: SubscribeReviewState
   onOpenPlan: (plan: string) => void
+  controls: SubscribeControls
+  /** Opens the subscriptions list — the third click of `SC-010`. */
+  onDone: () => void
+  explorerUrl: (signature: string) => string | null
 }) => (
   <div className="flex justify-center pt-4">
     <div className="w-full max-w-[520px] rounded-[10px] border border-hairline bg-ground p-6 sm:p-8">
@@ -344,7 +438,17 @@ export const LiveSubscribe = ({
           {state.message}
         </p>
       )}
-      {state.status === 'ready' && <Review review={state.review} />}
+      {state.status === 'ready' &&
+        (controls.state.status === 'done' || controls.state.status === 'unconfirmed' ? (
+          <Given
+            review={state.review}
+            state={controls.state}
+            onDone={onDone}
+            explorerUrl={explorerUrl}
+          />
+        ) : (
+          <Review review={state.review} controls={controls} />
+        ))}
     </div>
   </div>
 )

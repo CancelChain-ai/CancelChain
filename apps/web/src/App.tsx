@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { CancelFlow } from './chain/revoke'
+import { SubscribeFlow } from './chain/subscribe'
 import { WalletMenu } from './chain/WalletMenu'
 import { useWalletEnvironment } from './chain/WalletProvider'
 import { explorerTxUrl, shortenAddress, useWalletOwner } from './chain/wallet'
@@ -238,7 +239,18 @@ const App = () => {
               alreadyGiven={planAllowed}
             />
           ) : (
-            <LiveSubscribe state={subscribeReview} onOpenPlan={openPlan} />
+            // Keyed by plan: a finished or stopped flow belongs to the plan it ran for.
+            <SubscribeFlow key={planPda ?? ''}>
+              {(controls) => (
+                <LiveSubscribe
+                  state={subscribeReview}
+                  onOpenPlan={openPlan}
+                  controls={controls}
+                  onDone={() => setView('subscriptions')}
+                  explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
+                />
+              )}
+            </SubscribeFlow>
           ))}
 
         {view === 'merchant' && <Merchant />}
