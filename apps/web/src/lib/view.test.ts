@@ -14,6 +14,7 @@ import {
   nextChargeAt,
   scaleAmount,
   shortDay,
+  subscriptionEndingSentence,
   viewFromAllowance as toView,
   USDC_DECIMALS,
   viewFromPermission,
@@ -579,5 +580,42 @@ describe('historyFromSignatures', () => {
     expect(
       historyFromSignatures({ items: [], syncedAt: response.syncedAt, more: false }).rows,
     ).toEqual([])
+  })
+})
+
+describe('cancelAction and cancelWindow (T037a)', () => {
+  const PLAN = 'EwH6mqofjSWnzLRaMraBneQx3MyKsjqCfz2tREZUM2mg'
+  const subscription = (over: Partial<ListedAllowance> = {}) =>
+    listed({ kind: 'subscription', planPda: PLAN, endsAt: null, ...over })
+
+  it('a delegation closes and carries no window: its cancellation is immediate', () => {
+    const view = toView(listed(), NOW)
+    expect(view.cancelAction).toEqual({ kind: 'close' })
+    expect(view.cancelWindow).toBeNull()
+  })
+
+  it('a live subscription is cancelled first, with a window counted from the chain period', () => {
+    const view = toView(subscription(), NOW)
+    expect(view.cancelAction).toEqual({ kind: 'cancel-subscription' })
+    expect(view.cancelWindow?.stillChargeable).toBe(
+      view.cap.amount - (view.used?.amount ?? view.cap.amount),
+    )
+  })
+
+  it('a subscription that can no longer charge has no window', () => {
+    const view = toView(
+      subscription({ endsAt: '2026-09-01T10:00:00.000Z', status: 'exhausted' }),
+      NOW,
+    )
+    expect(view.cancelAction).toEqual({ kind: 'close' })
+    expect(view.cancelWindow).toBeNull()
+  })
+
+  it('the M0 mock keeps its own wording — no network claims on invented data', () => {
+    for (const permission of PERMISSIONS) {
+      const view = viewFromPermission(permission)
+      expect(view.cancelWindow).toBeNull()
+      expect(subscriptionEndingSentence(view)).toBeNull()
+    }
   })
 })

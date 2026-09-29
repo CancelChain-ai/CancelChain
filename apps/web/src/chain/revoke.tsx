@@ -1,4 +1,8 @@
-import { buildRevokeTransaction } from '@cancelchain/chain'
+import {
+  buildCancelSubscriptionTransaction,
+  buildRevokeTransaction,
+  revokeActionFor,
+} from '@cancelchain/chain'
 import { getBase58Decoder } from '@solana/kit'
 import { useSignAndSendTransaction } from '@solana/react'
 import type { SolanaChain } from '@solana/wallet-standard-chains'
@@ -33,17 +37,30 @@ import { accountSigningSupport, useWalletConnection, walletAccountAddress } from
 
 export type RevokeStep = 'checking' | 'preparing' | 'signing' | 'confirming'
 
+/**
+ * Which transaction the flow is signing (T037a). `close` is `revokeDelegation`;
+ * `cancel-subscription` is `cancelSubscription`, which leaves the account in
+ * place and sets the date charges stop. `null` while the flow still checks.
+ */
+export type SignedAction = 'close' | 'cancel-subscription'
+
 export type CancelState =
   | { status: 'idle' }
-  | { status: 'working'; id: string; step: RevokeStep }
+  | { status: 'working'; id: string; step: RevokeStep; action: SignedAction | null }
   /** Акаунта вже не було до підпису. Нічого не підписано й нічого не сталося. */
   | { status: 'gone'; id: string }
   | { status: 'done'; id: string; signature: string }
   /**
+   * A plan subscription whose charges stop at `endsAt`, as read back from the
+   * account. `signature: null` — it was already cancelled before anything was
+   * signed, so nothing was sent; the button should not have been there.
+   */
+  | { status: 'scheduled'; id: string; endsAt: string; signature: string | null }
+  /**
    * Гаманець сказав, що надіслав, а акаунт лишився на місці. Це **не** успіх і
    * не збій: транзакція могла не долетіти, а могла ще летіти.
    */
-  | { status: 'unconfirmed'; id: string; signature: string }
+  | { status: 'unconfirmed'; id: string; signature: string; action: SignedAction }
   | { status: 'failed'; id: string; message: string }
 
 export type CancelControls = {
@@ -68,7 +85,10 @@ const STEP_LABELS: Record<RevokeStep, string> = {
   confirming: 'Sent. Waiting for the network to drop the permission…',
 }
 
-export function stepLabel(step: RevokeStep): string {
+export function stepLabel(step: RevokeStep, action: SignedAction | null = null): string {
+  if (step === 'confirming' && action === 'cancel-subscription') {
+    return 'Sent. Waiting for the network to record the date charges stop…'
+  }
   return STEP_LABELS[step]
 }
 
@@ -88,6 +108,19 @@ export function describeRevokeFailure(error: unknown): string {
     }
   }
   return describeFailure(error)
+}
+
+/**
+ * The account as the network has it, or `null` when it is gone. With a store
+ * behind the API a closed account comes back as its cached row marked `revoked`
+ * with `chainState: null` — not as a 404 — and that too means gone.
+ */
+async function readOnChain(
+  readNow: NonNullable<typeof source.actions>['readNow'],
+  id: string,
+): Promise<Awaited<ReturnType<typeof readNow>>> {
+  const read = await readNow(id)
+  return read === null || read.chainState === null ? null : read
 }
 
 function sleep(ms: number): Promise<void> {
@@ -121,26 +154,48 @@ const Flow = ({ account, chain, children }: FlowProps) => {
 
       void (async () => {
         try {
-          setState({ status: 'working', id, step: 'checking' })
-          const current = await actions.readNow(id)
+          setState({ status: 'working', id, step: 'checking', action: null })
+          const current = await readOnChain(actions.readNow, id)
           if (current === null) {
             setState({ status: 'gone', id })
             refresh()
             return
           }
+          // Decided on the state just read, not on the card: the card may be
+          // older than a cancellation made from another tab or wallet.
+          const next = revokeActionFor(current)
+          if (next.kind === 'wait') {
+            setState({ status: 'scheduled', id, endsAt: next.until.toISOString(), signature: null })
+            refresh()
+            return
+          }
+          const action: SignedAction = next.kind
 
-          setState({ status: 'working', id, step: 'preparing' })
+          setState({ status: 'working', id, step: 'preparing', action })
           const lifetime = await actions.latestLifetime()
-          const built = buildRevokeTransaction({ allowance: current, authority, lifetime })
+          const input = { allowance: current, authority, lifetime }
+          const built =
+            action === 'close'
+              ? buildRevokeTransaction(input)
+              : await buildCancelSubscriptionTransaction(input)
 
-          setState({ status: 'working', id, step: 'signing' })
+          setState({ status: 'working', id, step: 'signing', action })
           const { signature } = await signAndSend({ transaction: built.wireTransaction })
           const base58 = getBase58Decoder().decode(signature)
 
-          setState({ status: 'working', id, step: 'confirming' })
+          setState({ status: 'working', id, step: 'confirming', action })
           for (let attempt = 0; attempt < CONFIRM_ATTEMPTS; attempt += 1) {
-            if ((await actions.readNow(id)) === null) {
+            const seen = await readOnChain(actions.readNow, id)
+            if (seen === null) {
+              // Closed — also the answer after `cancelSubscription` if the plan
+              // was gone and someone closed the account in the meantime.
               setState({ status: 'done', id, signature: base58 })
+              refresh()
+              return
+            }
+            if (action === 'cancel-subscription' && seen.endsAt !== null) {
+              // The date is the one the program wrote, not the one we predicted.
+              setState({ status: 'scheduled', id, endsAt: seen.endsAt, signature: base58 })
               refresh()
               return
             }
@@ -148,7 +203,7 @@ const Flow = ({ account, chain, children }: FlowProps) => {
           }
           // Ані успіх, ані невдача. Кажемо рівно це — і лишаємо підпис, щоб
           // людині було що подивитися в оглядачі.
-          setState({ status: 'unconfirmed', id, signature: base58 })
+          setState({ status: 'unconfirmed', id, signature: base58, action })
           refresh()
         } catch (error) {
           setState({ status: 'failed', id, message: describeRevokeFailure(error) })

@@ -1,3 +1,9 @@
+import {
+  type RevokeAction,
+  revokeActionFor,
+  type SubscriptionCancelWindow,
+  subscriptionCancelWindow,
+} from '@cancelchain/chain'
 import type {
   AllowanceDetail,
   AllowanceKind,
@@ -80,6 +86,19 @@ export interface AllowanceView {
   endsOn: Date | null
   /** Власний строк дозволу — інша річ, ніж `endsOn`: його поставив не користувач. */
   expiresOn: Date | null
+  /**
+   * What the cancel button does right now (T037a). A plan subscription is not
+   * closed in one step: the program first needs `cancelSubscription`, and closes
+   * the account only after the date that sets — see `packages/chain/src/revoke.ts`.
+   */
+  cancelAction: RevokeAction
+  /**
+   * An active plan subscription only: when its charges stop if cancelled now (or
+   * already stop, once cancelled), and what the merchant can still take before
+   * that. `null` for everything else, and for the M0 mock, which has no period
+   * start to count from.
+   */
+  cancelWindow: SubscriptionCancelWindow | null
   assetSupported: boolean
   /** Тихий рядок під заголовком або `null`. */
   note: string | null
@@ -234,6 +253,7 @@ export function viewFromAllowance(allowance: ListedAllowance, now = new Date()):
   const asset: (amount: bigint) => Money = allowance.assetSupported
     ? usdc
     : (amount) => ({ amount, decimals: null, label: shortenAddress(allowance.mint) })
+  const periodStartedAt = dateOrNull(allowance.periodStartedAt)
 
   return {
     id: allowance.pda,
@@ -253,6 +273,22 @@ export function viewFromAllowance(allowance: ListedAllowance, now = new Date()):
     nextCharge: nextChargeAt(allowance),
     endsOn: dateOrNull(allowance.endsAt),
     expiresOn: dateOrNull(allowance.expiresAt),
+    cancelAction: revokeActionFor(allowance, now),
+    cancelWindow:
+      subscription &&
+      allowance.status === 'active' &&
+      allowance.periodSeconds !== null &&
+      periodStartedAt !== null
+        ? subscriptionCancelWindow(
+            {
+              periodSeconds: allowance.periodSeconds,
+              periodStartedAt,
+              cap: toU64(allowance.capAmount),
+              spentInPeriod: toU64(allowance.spentInPeriod),
+            },
+            now,
+          )
+        : null,
     assetSupported: allowance.assetSupported,
     note: null,
   }
@@ -309,6 +345,11 @@ export function viewFromPermission(permission: Permission): AllowanceView {
     nextCharge: mockDate(permission.nextCharge ?? undefined),
     endsOn: mockDate(permission.endsOn),
     expiresOn: null,
+    cancelAction: revokeActionFor({
+      kind: permission.viaPlan ? 'subscription' : 'recurring',
+      endsAt: mockDate(permission.endsOn)?.toISOString() ?? null,
+    }),
+    cancelWindow: null,
     assetSupported: permission.asset === 'USDC',
     note: permission.quietTag ?? null,
   }
@@ -360,6 +401,9 @@ export function capSentence(view: AllowanceView): string {
 export function exhaustedSentence(view: AllowanceView): string {
   if (view.kind === 'fixed' && view.cap.amount === 0n) {
     return 'Nothing is left on this one-off permission. It cannot charge again.'
+  }
+  if (view.kind === 'subscription' && view.endsOn !== null) {
+    return `Cancelled — the network has refused every charge since ${shortDay(view.endsOn)}, ${formatClock(view.endsOn)}.`
   }
   return 'Past its expiry. It cannot charge again.'
 }
@@ -673,4 +717,62 @@ export function cardFields(
     usedField(detail),
     nextChargeField(detail),
   ]
+}
+
+/** A date with its time: the end of a subscription is a moment, and the chain counts seconds. */
+function dayAndClock(date: Date): string {
+  return `${shortDay(date)}, ${formatClock(date)}`
+}
+
+function sameAsset(view: AllowanceView, amount: bigint): Money {
+  return { ...view.cap, amount }
+}
+
+function takenThisPeriod(view: AllowanceView, window: SubscriptionCancelWindow): string {
+  return window.chargedThisPeriod === 0n
+    ? 'It has taken nothing this period yet'
+    : `It has already taken ${formatMoney(sameAsset(view, window.chargedThisPeriod))} this period`
+}
+
+/**
+ * The confirmation before `cancelSubscription` — `FR-019` as it holds for a plan
+ * subscription (T037a). It says what the network actually does: charges stop at
+ * the end of the current period, not now, and until then the merchant can still
+ * take what is left of the period's cap.
+ */
+export function subscriptionCancelSentence(view: AllowanceView): string {
+  const window = view.cancelWindow
+  const shortCut = 'the network does not let a subscriber cut a subscription short'
+  const after =
+    'After that the network refuses every charge, and you can close the permission, which returns its deposit.'
+  if (window === null) {
+    return `Charges stop at the end of the period you are in — ${shortCut}. ${after}`
+  }
+  return (
+    `Charges stop on ${dayAndClock(window.endsNoLaterThan)} at the latest — the end of the ` +
+    `period you are in; ${shortCut}. Until then this plan can still take up to ` +
+    `${formatMoney(sameAsset(view, window.stillChargeable))}. ${takenThisPeriod(view, window)}. ` +
+    after
+  )
+}
+
+/** A cancelled subscription still inside its paid period: what can still happen, and when it stops. */
+export function subscriptionEndingSentence(view: AllowanceView): string | null {
+  // No window — the M0 mock, which has no period start: it keeps its own tag.
+  const window = view.cancelWindow
+  if (view.cancelAction.kind !== 'wait' || window === null) return null
+  return (
+    `Cancelled: the network refuses every charge from ${dayAndClock(view.cancelAction.until)}. ` +
+    `Until then this plan can still take up to ${formatMoney(sameAsset(view, window.stillChargeable))}. ` +
+    `${takenThisPeriod(view, window)}.`
+  )
+}
+
+/** The confirmation before closing a subscription whose charges have already stopped. */
+export function subscriptionCloseSentence(view: AllowanceView): string {
+  const since = view.endsOn === null ? '' : ` on ${dayAndClock(view.endsOn)}`
+  return (
+    `Charges under this subscription already stopped${since}. Closing removes its account ` +
+    'from the network and returns its deposit to whoever paid it; it changes nothing about charges.'
+  )
 }

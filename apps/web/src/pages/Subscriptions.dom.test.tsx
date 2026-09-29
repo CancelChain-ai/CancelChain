@@ -376,14 +376,14 @@ describe('cancelling from the list', () => {
   })
 
   it('offers nothing more while the signature is in the wallet', () => {
-    withCancel({ status: 'working', id: PDA, step: 'signing' })
+    withCancel({ status: 'working', id: PDA, step: 'signing', action: 'close' })
     expect(screen.getByText(/waiting for your wallet to sign/i)).toBeDefined()
     expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Cancel this permission' })).toBeNull()
   })
 
   it('an unconfirmed send is not reported as cancelled', () => {
-    withCancel({ status: 'unconfirmed', id: PDA, signature: 'abc123' })
+    withCancel({ status: 'unconfirmed', id: PDA, signature: 'abc123', action: 'close' })
     const text = screen.getByText(/still on the network/i).textContent ?? ''
     expect(text).toMatch(/this is not a confirmation/i)
     expect(screen.queryByText(/^Cancelled\./)).toBeNull()
@@ -408,7 +408,7 @@ describe('cancelling from the list', () => {
         walletLabel="4DYh…Jj96"
         onNetwork={true}
         cancel={{
-          state: { status: 'working', id: PDA, step: 'confirming' },
+          state: { status: 'working', id: PDA, step: 'confirming', action: 'close' },
           cancel: () => {},
           unavailable: null,
           dismiss: () => {},
@@ -483,7 +483,7 @@ describe('a permission that is gone from the list', () => {
   it('treats an absence as the confirmation the wallet never gave us', () => {
     // Ми перестали чекати, поки акаунт був на місці. Список, прочитаний після
     // того, його не бачить — це та сама перевірка, тільки пізніше.
-    withState({ status: 'unconfirmed', id: OTHER_PDA, signature: 'abc123' })
+    withState({ status: 'unconfirmed', id: OTHER_PDA, signature: 'abc123', action: 'close' })
     const text = screen.getByText(/stopped waiting/i).textContent ?? ''
     expect(text).toMatch(/the account is gone after all/i)
     expect(text).not.toMatch(/this is not a confirmation/i)
@@ -496,7 +496,7 @@ describe('a permission that is gone from the list', () => {
   })
 
   it('does not go silent when the card disappears mid-flow', () => {
-    withState({ status: 'working', id: OTHER_PDA, step: 'signing' })
+    withState({ status: 'working', id: OTHER_PDA, step: 'signing', action: 'close' })
     expect(screen.getByText(/waiting for your wallet to sign/i)).toBeDefined()
   })
 })
@@ -537,5 +537,112 @@ describe('what an empty list is allowed to claim', () => {
     show(ready({ items: [], stale: true }))
     expect(screen.queryByText(/No one can charge this wallet/i)).toBeNull()
     expect(screen.getByText(/not an answer about what can charge this wallet/i)).toBeDefined()
+  })
+})
+
+/**
+ * A plan subscription on the list (T037a). The program does not let a
+ * subscriber close a subscription before the end of its paid period, so the card
+ * must not promise "immediately": it names the date charges stop, what the plan
+ * can still take until then, and whether it has already taken anything.
+ */
+describe('cancelling a plan subscription', () => {
+  const PLAN = 'EwH6mqofjSWnzLRaMraBneQx3MyKsjqCfz2tREZUM2mg'
+  // Period 7 Aug → 6 Sep (10:00 UTC keeps the day in any zone the tests run in); NOW is 2 Sep, 12 of 24 USDC already taken.
+  const live = () =>
+    listed({
+      kind: 'subscription',
+      planPda: PLAN,
+      endsAt: null,
+      periodStartedAt: '2026-08-07T10:00:00.000Z',
+    })
+
+  function withSubscription(
+    allowance: ListedAllowance,
+    state: CancelState = { status: 'idle' },
+    cancel: ((id: string) => void) | null = () => {},
+  ) {
+    render(
+      <Subscriptions
+        state={ready({ items: [viewFromAllowance(allowance)] })}
+        walletLabel="4DYh…Jj96"
+        onNetwork={true}
+        cancel={{ state, cancel, unavailable: null, dismiss: () => {} }}
+      />,
+    )
+  }
+
+  it('the confirmation names the date charges stop and what can still be taken — not "immediately"', () => {
+    const cancel = vi.fn()
+    withSubscription(live(), { status: 'idle' }, cancel)
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+
+    const text = screen.getByText(/Charges stop on/).textContent ?? ''
+    expect(text).toMatch(/6 Sep/)
+    expect(text).toMatch(/at the latest/)
+    expect(text).toMatch(/can still take up to 12\.00 USDC/)
+    expect(text).toMatch(/already taken 12\.00 USDC this period/)
+    expect(screen.queryByText(/immediately/i)).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this subscription' }))
+    expect(cancel).toHaveBeenCalledWith(PDA)
+  })
+
+  it('says so when nothing has been taken this period yet', () => {
+    withSubscription({ ...live(), spentInPeriod: '0' })
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    const text = screen.getByText(/Charges stop on/).textContent ?? ''
+    expect(text).toMatch(/can still take up to 24\.00 USDC/)
+    expect(text).toMatch(/taken nothing this period yet/)
+  })
+
+  it('a cancelled subscription inside its period offers nothing to sign, and says until when', () => {
+    withSubscription({ ...live(), endsAt: '2026-09-06T10:00:00.000Z' })
+    expect(screen.getByText(/Cancelled: the network refuses every charge from 6 Sep/)).toBeDefined()
+    expect(screen.getByText(/nothing to sign until then/i)).toBeDefined()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+  })
+
+  it('past its date it can be closed, and closing is not presented as stopping charges', () => {
+    withSubscription({ ...live(), endsAt: '2026-09-01T10:00:00.000Z', status: 'exhausted' })
+    expect(screen.getByText(/refused every charge since 1 Sep/)).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.getByText(/already stopped/).textContent).toMatch(/changes nothing about charges/)
+    expect(screen.getByRole('button', { name: 'Close this permission' })).toBeDefined()
+  })
+
+  it('a recorded cancellation is not reported as "Cancelled." — charges have not stopped yet', () => {
+    withSubscription(live(), {
+      status: 'scheduled',
+      id: PDA,
+      endsAt: '2026-09-06T10:00:00.000Z',
+      signature: 'abc123',
+    })
+    const text = screen.getByText(/Cancellation recorded on the network/).textContent ?? ''
+    expect(text).toMatch(/every charge from 6 Sep/)
+    expect(text).toMatch(/abc123/)
+    expect(screen.queryByText(/^Cancelled\./)).toBeNull()
+  })
+
+  it('an unconfirmed cancelSubscription speaks of the end date, not of a closed account', () => {
+    withSubscription(live(), {
+      status: 'unconfirmed',
+      id: PDA,
+      signature: 'abc123',
+      action: 'cancel-subscription',
+    })
+    expect(screen.getByText(/does not show an end date on this subscription yet/)).toBeDefined()
+  })
+
+  it('while confirming, it waits for the date, not for the account to disappear', () => {
+    withSubscription(live(), {
+      status: 'working',
+      id: PDA,
+      step: 'confirming',
+      action: 'cancel-subscription',
+    })
+    expect(screen.getByText(/record the date charges stop/)).toBeDefined()
+    expect(screen.queryByText(/drop the permission/)).toBeNull()
   })
 })

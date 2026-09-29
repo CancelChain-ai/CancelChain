@@ -7,6 +7,9 @@ import {
   getTransactionEncoder,
 } from '@solana/kit'
 import {
+  CANCEL_SUBSCRIPTION_DISCRIMINATOR,
+  findEventAuthorityPda,
+  getCancelSubscriptionInstructionDataDecoder,
   getRevokeDelegationInstructionDataDecoder,
   identifySubscriptionsInstruction,
   REVOKE_DELEGATION_DISCRIMINATOR,
@@ -16,14 +19,21 @@ import {
 import { describe, expect, it } from 'vitest'
 import { PROGRAM_ADDRESS } from './client.js'
 import {
+  buildCancelSubscriptionInstruction,
+  buildCancelSubscriptionTransaction,
   buildRevokeInstruction,
   buildRevokeTransaction,
   buildRevokeTransactionMessage,
   REVOKE_TRANSACTION_VERSION,
+  RevokeAlreadyCancelledError,
   RevokeAuthorityMismatchError,
   RevokeMissingPlanError,
+  RevokeNotASubscriptionError,
   RevokePlanNotApplicableError,
+  RevokeSubscriptionNotEndedError,
   type RevokeTarget,
+  revokeActionFor,
+  subscriptionCancelWindow,
 } from './revoke.js'
 
 const PDA = '6Y7s52pnmsnxT4jQTXpgvJ9kZvM4Me3VMUUUhogq8imH' as Address
@@ -36,14 +46,23 @@ const BLOCKHASH = 'EkSnNWid2cvwEVnVx9aBqawnmiCNiDgp3gUdkDPTKN1N' as Blockhash
 const LAST_VALID_BLOCK_HEIGHT = 492_096_495n
 const LIFETIME = { blockhash: BLOCKHASH, lastValidBlockHeight: LAST_VALID_BLOCK_HEIGHT }
 
-const FIXED: RevokeTarget = { kind: 'fixed', owner: OWNER, pda: PDA, planPda: null }
-const RECURRING: RevokeTarget = { kind: 'recurring', owner: OWNER, pda: PDA, planPda: null }
+const FIXED: RevokeTarget = {
+  kind: 'fixed',
+  owner: OWNER,
+  pda: PDA,
+  planPda: null,
+  endsAt: null,
+}
+const RECURRING: RevokeTarget = { ...FIXED, kind: 'recurring' }
+/** Cancelled and past its date — the only state in which the program closes a subscription. */
 const SUBSCRIPTION: RevokeTarget = {
   kind: 'subscription',
   owner: OWNER,
   pda: PDA,
   planPda: PLAN_PDA,
+  endsAt: '2026-01-01T00:00:00.000Z',
 }
+const LIVE_SUBSCRIPTION: RevokeTarget = { ...SUBSCRIPTION, endsAt: null }
 
 type PlainAccount = { address: Address; role: AccountRole }
 
@@ -274,5 +293,202 @@ describe('транзакція під один підпис', () => {
       lifetime: LIFETIME,
     })
     expect(Buffer.from(built.wireTransaction).toString('base64')).toBe(built.wireTransactionBase64)
+  })
+})
+
+describe('revokeActionFor — which of the two subscription actions is due (T037a)', () => {
+  const now = new Date('2026-09-29T12:00:00.000Z')
+
+  it('a delegation closes at any time, whatever endsAt says', () => {
+    expect(revokeActionFor(FIXED, now)).toEqual({ kind: 'close' })
+    expect(revokeActionFor(RECURRING, now)).toEqual({ kind: 'close' })
+  })
+
+  it('a live subscription is cancelled first, not closed', () => {
+    expect(revokeActionFor(LIVE_SUBSCRIPTION, now)).toEqual({ kind: 'cancel-subscription' })
+  })
+
+  it('a cancelled subscription inside its period has nothing to sign until its date', () => {
+    const endsAt = '2026-10-28T17:07:36.000Z'
+    expect(revokeActionFor({ ...SUBSCRIPTION, endsAt }, now)).toEqual({
+      kind: 'wait',
+      until: new Date(endsAt),
+    })
+  })
+
+  it('closes at the date itself — the program allows it once expiresAtTs <= now', () => {
+    expect(revokeActionFor({ ...SUBSCRIPTION, endsAt: now.toISOString() }, now)).toEqual({
+      kind: 'close',
+    })
+  })
+})
+
+describe('closing a subscription is refused before the signature, not with Custom 510', () => {
+  it('never cancelled', () => {
+    expect(() =>
+      buildRevokeInstruction({ allowance: LIVE_SUBSCRIPTION, authority: OWNER }),
+    ).toThrow(RevokeSubscriptionNotEndedError)
+  })
+
+  it('cancelled, period still running — the error carries the date', () => {
+    const endsAt = '2026-10-28T17:07:36.000Z'
+    const now = new Date('2026-10-28T17:07:35.000Z')
+    const attempt = () =>
+      buildRevokeInstruction({ allowance: { ...SUBSCRIPTION, endsAt }, authority: OWNER, now })
+    expect(attempt).toThrow(RevokeSubscriptionNotEndedError)
+    expect(attempt).toThrow(endsAt)
+  })
+
+  it('builds at the date itself', () => {
+    const endsAt = '2026-10-28T17:07:36.000Z'
+    const instruction = buildRevokeInstruction({
+      allowance: { ...SUBSCRIPTION, endsAt },
+      authority: OWNER,
+      now: new Date(endsAt),
+    })
+    expect(instructionData(instruction)).toEqual(Uint8Array.of(REVOKE_DELEGATION_DISCRIMINATOR))
+  })
+})
+
+describe('buildCancelSubscriptionInstruction — round-trip', () => {
+  it('is cancelSubscription (12): not revokeDelegation, not cancelSubscriptionNow', async () => {
+    const instruction = await buildCancelSubscriptionInstruction({
+      allowance: LIVE_SUBSCRIPTION,
+      authority: OWNER,
+    })
+    expect(identifySubscriptionsInstruction({ data: instructionData(instruction) })).toBe(
+      SubscriptionsInstruction.CancelSubscription,
+    )
+    expect(instruction.programAddress).toBe(PROGRAM_ADDRESS)
+  })
+
+  it('data is the discriminator and nothing else — there is no field to leave empty', async () => {
+    const instruction = await buildCancelSubscriptionInstruction({
+      allowance: LIVE_SUBSCRIPTION,
+      authority: OWNER,
+    })
+    const data = instructionData(instruction)
+    expect(data).toEqual(Uint8Array.of(CANCEL_SUBSCRIPTION_DISCRIMINATOR))
+    expect(getCancelSubscriptionInstructionDataDecoder().decode(data)).toEqual({
+      discriminator: CANCEL_SUBSCRIPTION_DISCRIMINATOR,
+    })
+  })
+
+  it('accounts in program order: subscriber, plan, subscription, event authority, program', async () => {
+    const instruction = await buildCancelSubscriptionInstruction({
+      allowance: LIVE_SUBSCRIPTION,
+      authority: OWNER,
+    })
+    const [eventAuthority] = await findEventAuthorityPda()
+    expect(plainAccounts(instruction)).toEqual([
+      { address: OWNER, role: AccountRole.READONLY_SIGNER },
+      { address: PLAN_PDA, role: AccountRole.READONLY },
+      { address: PDA, role: AccountRole.WRITABLE },
+      { address: eventAuthority, role: AccountRole.READONLY },
+      { address: PROGRAM_ADDRESS, role: AccountRole.READONLY },
+    ])
+    expect(plainAccounts(instruction).map((a) => a.address)).not.toContain(ZERO_ADDRESS)
+  })
+
+  it('compiled → decompiled: the same instruction, the owner pays and is the only signer', async () => {
+    const built = await buildCancelSubscriptionTransaction({
+      allowance: LIVE_SUBSCRIPTION,
+      authority: OWNER,
+      lifetime: LIFETIME,
+    })
+    const back = decompileTransactionMessage(
+      getCompiledTransactionMessageDecoder().decode(built.transaction.messageBytes),
+      { lastValidBlockHeight: LAST_VALID_BLOCK_HEIGHT },
+    )
+    expect(back.version).toBe(REVOKE_TRANSACTION_VERSION)
+    expect(back.feePayer.address).toBe(OWNER)
+    expect(back.lifetimeConstraint).toEqual(LIFETIME)
+    expect(back.instructions).toHaveLength(1)
+
+    const [source] = built.message.instructions
+    const [returned] = back.instructions
+    if (source === undefined || returned === undefined) throw new Error('no instruction')
+    expect(instructionData(returned)).toEqual(instructionData(source))
+    // The fee payer is writable in the message, so the compiler widens the
+    // subscriber's read-only signer role; every other role survives unchanged.
+    const widened = plainAccounts(source).map((account) =>
+      account.address === OWNER ? { ...account, role: AccountRole.WRITABLE_SIGNER } : account,
+    )
+    expect(plainAccounts(returned)).toEqual(widened)
+    expect(Object.keys(built.transaction.signatures)).toEqual([OWNER])
+    expect(built.transaction.signatures[OWNER]).toBeNull()
+    expect(Buffer.from(built.wireTransaction).toString('base64')).toBe(built.wireTransactionBase64)
+  })
+
+  it('refuses what the program would refuse after the signature', async () => {
+    await expect(
+      buildCancelSubscriptionInstruction({ allowance: RECURRING, authority: OWNER }),
+    ).rejects.toThrow(RevokeNotASubscriptionError)
+    await expect(
+      buildCancelSubscriptionInstruction({ allowance: LIVE_SUBSCRIPTION, authority: STRANGER }),
+    ).rejects.toThrow(RevokeAuthorityMismatchError)
+    await expect(
+      buildCancelSubscriptionInstruction({
+        allowance: { ...LIVE_SUBSCRIPTION, planPda: null },
+        authority: OWNER,
+      }),
+    ).rejects.toThrow(RevokeMissingPlanError)
+    await expect(
+      buildCancelSubscriptionInstruction({ allowance: SUBSCRIPTION, authority: OWNER }),
+    ).rejects.toThrow(RevokeAlreadyCancelledError)
+  })
+})
+
+describe('subscriptionCancelWindow — mirrors cancel_subscription.rs', () => {
+  // Subscription CKjAhy… on devnet as read 2026-09-29: a 720 h plan, nothing pulled yet.
+  const PERIOD = 720 * 3_600
+  const START_TS = 1_790_615_256
+  const base = {
+    periodSeconds: PERIOD,
+    periodStartedAt: new Date(START_TS * 1000),
+    cap: 9_990_000n,
+  }
+  const at = (ts: number) => new Date(ts * 1000)
+
+  it('inside the recorded period: ends at its end, and what was pulled counts', () => {
+    const window = subscriptionCancelWindow(
+      { ...base, spentInPeriod: 4_000_000n },
+      at(1_790_688_118),
+    )
+    expect(window.endsNoLaterThan).toEqual(at(START_TS + PERIOD))
+    expect(window.currentPeriodStartedAt).toEqual(at(START_TS))
+    expect(window.chargedThisPeriod).toBe(4_000_000n)
+    expect(window.stillChargeable).toBe(5_990_000n)
+  })
+
+  it('recorded period already over: the next boundary, and the old pull does not count', () => {
+    const window = subscriptionCancelWindow(
+      { ...base, spentInPeriod: 9_990_000n },
+      at(START_TS + 2 * PERIOD + 60),
+    )
+    expect(window.endsNoLaterThan).toEqual(at(START_TS + 3 * PERIOD))
+    expect(window.currentPeriodStartedAt).toEqual(at(START_TS + 2 * PERIOD))
+    expect(window.chargedThisPeriod).toBe(0n)
+    expect(window.stillChargeable).toBe(9_990_000n)
+  })
+
+  it('exactly at a boundary the new period has begun (integer division, as on chain)', () => {
+    const window = subscriptionCancelWindow({ ...base, spentInPeriod: 1n }, at(START_TS + PERIOD))
+    expect(window.endsNoLaterThan).toEqual(at(START_TS + 2 * PERIOD))
+    expect(window.chargedThisPeriod).toBe(0n)
+  })
+
+  it('a pull above the cap never yields a negative remainder', () => {
+    const window = subscriptionCancelWindow(
+      { ...base, spentInPeriod: 10_000_000n },
+      at(1_790_688_118),
+    )
+    expect(window.stillChargeable).toBe(0n)
+  })
+
+  it('refuses a period the program could not have', () => {
+    expect(() =>
+      subscriptionCancelWindow({ ...base, periodSeconds: 0, spentInPeriod: 0n }),
+    ).toThrow(RangeError)
   })
 })

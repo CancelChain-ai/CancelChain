@@ -5,6 +5,9 @@ import {
   exhaustedSentence,
   formatMoney,
   shortDay,
+  subscriptionCancelSentence,
+  subscriptionCloseSentence,
+  subscriptionEndingSentence,
 } from '../lib/view'
 import ConsentStrip from './ConsentStrip'
 
@@ -103,11 +106,22 @@ const AllowanceCard = ({
   // забирати людину на інший екран посеред рішення про скасування.
   const interactive = onOpen !== undefined && !revoked && !confirming && cancelProgress === null
 
-  const confirmSentence = paused
-    ? 'Cancelling stops all future charges immediately. You are not being charged while it is paused, but the permission still exists until you cancel it.'
-    : periodEnd
-      ? `Cancelling stops all future charges immediately. You have already paid for the period ending ${shortDay(periodEnd)} — whether they let you keep using the service until then is their decision, not ours.`
-      : 'Cancelling stops all future charges immediately. You have already paid for the current period — whether they let you keep using the service until then is their decision, not ours.'
+  const subscription = view.kind === 'subscription'
+  const action = view.cancelAction.kind
+  // A cancelled subscription inside its paid period has nothing to sign (T037a).
+  const offersCancel = onCancel !== undefined && !revoked && action !== 'wait'
+  const endingSentence = revoked ? null : subscriptionEndingSentence(view)
+
+  const confirmSentence =
+    subscription && action === 'cancel-subscription'
+      ? subscriptionCancelSentence(view)
+      : subscription && action === 'close'
+        ? subscriptionCloseSentence(view)
+        : paused
+          ? 'Cancelling stops all future charges immediately. You are not being charged while it is paused, but the permission still exists until you cancel it.'
+          : periodEnd
+            ? `Cancelling stops all future charges immediately. You have already paid for the period ending ${shortDay(periodEnd)} — whether they let you keep using the service until then is their decision, not ours.`
+            : 'Cancelling stops all future charges immediately. You have already paid for the current period — whether they let you keep using the service until then is their decision, not ours.'
 
   return (
     <div
@@ -260,15 +274,26 @@ const AllowanceCard = ({
           </div>
         )}
 
-        {onCancel !== undefined && !revoked && !confirming && cancelProgress === null && (
+        {endingSentence !== null && (
+          <p className="mt-4 text-[13px] leading-relaxed text-ink/80 tnum">{endingSentence}</p>
+        )}
+
+        {onCancel !== undefined && action === 'wait' && !revoked && cancelProgress === null && (
+          <p className="mt-4 text-[12px] leading-relaxed text-ink/55">
+            There is nothing to sign until then. After that date you can close it here, which
+            removes its account and returns its deposit.
+          </p>
+        )}
+
+        {offersCancel && !confirming && cancelProgress === null && (
           <div className="mt-5 flex flex-col gap-2">
             <button type="button" onClick={openConfirm} className={`${buttonBase} text-rust`}>
-              Cancel
+              {subscription && action === 'close' ? 'Close' : 'Cancel'}
             </button>
           </div>
         )}
 
-        {onCancel !== undefined && !revoked && confirming && cancelProgress === null && (
+        {offersCancel && confirming && cancelProgress === null && (
           <div className="mt-5 rounded-md border border-hairline p-4">
             <p className="text-[13px] leading-relaxed text-ink/80">{confirmSentence}</p>
             <div className="mt-4 flex flex-col gap-2 sm:flex-row">
@@ -281,7 +306,11 @@ const AllowanceCard = ({
                 }}
                 className="flex-1 rounded-md border border-rust bg-rust py-[10px] text-[13px] text-ground transition-opacity duration-150 hover:opacity-90"
               >
-                Cancel this permission
+                {subscription && action === 'cancel-subscription'
+                  ? 'Cancel this subscription'
+                  : subscription && action === 'close'
+                    ? 'Close this permission'
+                    : 'Cancel this permission'}
               </button>
               <button
                 type="button"

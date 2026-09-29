@@ -9,6 +9,7 @@ import {
   everyPeriod,
   formatClock,
   scaleAmount,
+  shortDay,
   UNREADABLE_REASON_LABELS,
 } from '../lib/view'
 
@@ -68,10 +69,15 @@ function noticeFor(state: CancelControls['state'], id: string): CancelNotice | n
         tone: 'good',
         text: `Cancelled. The permission account no longer exists on the network — the next charge has nothing to charge against. Transaction ${state.signature}.`,
       }
+    case 'scheduled':
+      return { tone: 'good', text: scheduledText(state) }
     case 'unconfirmed':
       return {
         tone: 'warn',
-        text: `Your wallet reported transaction ${state.signature}, but the permission is still on the network. It may still land, or it may have failed — this is not a confirmation.`,
+        text:
+          state.action === 'cancel-subscription'
+            ? `Your wallet reported transaction ${state.signature}, but the network does not show an end date on this subscription yet. It may still land, or it may have failed — this is not a confirmation.`
+            : `Your wallet reported transaction ${state.signature}, but the permission is still on the network. It may still land, or it may have failed — this is not a confirmation.`,
       }
     case 'failed':
       return { tone: 'bad', text: state.message }
@@ -80,8 +86,21 @@ function noticeFor(state: CancelControls['state'], id: string): CancelNotice | n
   }
 }
 
+/**
+ * `cancelSubscription` landed (or had landed before): the account stays, with the
+ * date the program wrote into it. Not "Cancelled." on its own — charges have not
+ * stopped yet, and saying so would be the claim T037a exists to take back.
+ */
+function scheduledText(state: Extract<CancelState, { status: 'scheduled' }>): string {
+  const endsAt = new Date(state.endsAt)
+  const when = `${shortDay(endsAt)}, ${formatClock(endsAt)}`
+  return state.signature === null
+    ? `This subscription was already cancelled before anything was signed: the network refuses every charge from ${when}. Nothing was sent.`
+    : `Cancellation recorded on the network: every charge from ${when} will be refused. Until then the merchant can still charge what is left of this period. Transaction ${state.signature}.`
+}
+
 function progressFor(state: CancelControls['state'], id: string): string | null {
-  return state.status === 'working' && state.id === id ? stepLabel(state.step) : null
+  return state.status === 'working' && state.id === id ? stepLabel(state.step, state.action) : null
 }
 
 const Notice = ({ children }: { children: React.ReactNode }) => (
@@ -223,6 +242,13 @@ function departedNotice(state: FinishedCancel, readAt: string): CancelNotice {
           `has nothing to charge against, so it is gone from the list read at ${readAt} instead ` +
           `of sitting in it marked cancelled. Transaction ${state.signature}.`,
       }
+    case 'scheduled':
+      // The account stays after `cancelSubscription`, so the card vanishing
+      // here means it was closed since — the list, read later, is the answer.
+      return {
+        tone: 'good',
+        text: `${scheduledText(state)} It is not in the list read at ${readAt}: its account has been closed since.`,
+      }
     case 'unconfirmed':
       /*
        * Тут «невідомо» вже скінчилося. Ми перестали чекати, поки акаунт був на
@@ -265,7 +291,7 @@ const Departed = ({
     // тут не можна: підпис уже може бути в гаманці.
     return (
       <p className="mt-8 max-w-[640px] rounded-md border border-hairline p-4 text-[13px] leading-relaxed text-ink/80">
-        {stepLabel(state.step)} Its card is no longer in the list read at {readAt}.
+        {stepLabel(state.step, state.action)} Its card is no longer in the list read at {readAt}.
       </p>
     )
   }
