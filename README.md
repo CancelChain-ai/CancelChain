@@ -58,22 +58,26 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   paid this way.
 - **The merchant catalogue, plans and any names on screen are invented.** Only the
   on-chain side is real.
-- **The activity feed is minimal.** Without an indexer it shows which transactions
-  touched the allowance's address and whether the network accepted each one — no
-  amounts, no refusal reasons. It is the history of an *address*: cancelling closes the
+- **The activity feed is minimal.** Until the indexer stores what it decodes, the feed
+  shows which transactions touched the allowance's address and whether the network
+  accepted each one — no amounts, no refusal reasons. It is the history of an *address*: cancelling closes the
   account, the same seeds derive the same address again, and an older row may belong to
   a permission that no longer exists. The screen says so.
 - **A one-off allowance does not record what it has already spent.** The account holds
   only the remainder, and the card says that in words rather than showing a zero.
-- **Nothing is hosted.** Everything runs on a laptop; there is no indexer, no push
-  notifications and no way to grant an allowance from the interface yet — allowances
-  are seeded by `merchant-sim`.
+- **The indexer only logs.** `apps/indexer` follows the program live and decodes each
+  transaction into charges, refusals with the program's error code, cancellations and
+  closures — but it writes them to its log, not to a database, and a code is not yet a
+  reason in words.
+- **Nothing is hosted.** Everything runs on a laptop; there are no push notifications
+  yet.
 
 ## Layout
 
 ```
 apps/web            React 18 + Vite 7 · wallet-standard connection, list, card, cancel flow
 apps/api            Hono 4 · read-only over the network, shared Zod contracts, 60 req/min
+apps/indexer        logsSubscribe worker · transaction → permission events, catch-up after drops
 packages/chain      @solana/kit 7.1.1 · account decoding, PDA derivation, instruction builders
 packages/shared     Zod schemas and error format used by both sides of the API
 packages/db         Drizzle schema (empty until the indexer exists)

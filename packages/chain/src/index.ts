@@ -1,5 +1,6 @@
 export * from './client.js'
 export * from './decode.js'
+export * from './events.js'
 export * from './grant.js'
 export * from './history.js'
 export * from './pda.js'
