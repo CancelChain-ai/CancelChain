@@ -59,6 +59,7 @@ describe('streamMessageSchema', () => {
         signature: '5'.repeat(88),
         slot: 325_100_442,
         blockTime: '2026-09-02T10:15:00.000Z',
+        chargesStopAt: null,
       },
     }
     expect(streamMessageSchema.parse(message)).toEqual(message)

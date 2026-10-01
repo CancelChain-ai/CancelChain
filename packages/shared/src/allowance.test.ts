@@ -120,6 +120,7 @@ describe('eventSchema', () => {
     signature: SIGNATURE,
     slot: 325_100_442,
     blockTime: '2026-08-07T00:00:00.000Z',
+    chargesStopAt: null,
   }
 
   it('accepts a charge', () => {
@@ -140,6 +141,14 @@ describe('eventSchema', () => {
       }).success,
     ).toBe(true)
     expect(eventSchema.safeParse({ ...base, reason: 'cap_exceeded' }).success).toBe(false)
+  })
+
+  it('requires the date charges stop on a cancellation, and nowhere else', () => {
+    const cancelled = { ...base, kind: 'cancelled' as const, amount: null }
+    const stop = '2026-10-28T17:07:36.000Z'
+    expect(eventSchema.safeParse({ ...cancelled, chargesStopAt: stop }).success).toBe(true)
+    expect(eventSchema.safeParse(cancelled).success).toBe(false)
+    expect(eventSchema.safeParse({ ...base, chargesStopAt: stop }).success).toBe(false)
   })
 
   it('allows a rejection whose program code we could not map', () => {

@@ -97,6 +97,13 @@ type Common = {
   blockTime: bigint | null
   /** Index of the top-level instruction the event came from. */
   instructionIndex: number
+  /**
+   * Place of the instruction behind the event in the transaction's execution
+   * order, CPIs included — a property of the transaction, not of this decoder.
+   * One transaction can charge the same permission several times (a split
+   * payment does, on devnet); this is what tells those charges apart.
+   */
+  position: number
 }
 
 export type IndexedEvent = Common &
@@ -173,6 +180,8 @@ const base58 = getBase58Encoder()
 type LocatedInstruction = {
   /** Top-level instruction this one belongs to. */
   outerIndex: number
+  /** Index in execution order across the whole transaction, CPIs included. */
+  position: number
   /** `false` for the top-level instruction itself. */
   inner: boolean
   programAddress: Address
@@ -219,6 +228,7 @@ function locate(
   table: AccountMeta[],
   outerIndex: number,
   inner: boolean,
+  position: number,
 ): LocatedInstruction {
   const meta = (index: Integer): AccountMeta => {
     const found = table[Number(index)]
@@ -227,6 +237,7 @@ function locate(
   }
   return {
     outerIndex,
+    position,
     inner,
     programAddress: meta(compiled.programIdIndex).address,
     accounts: compiled.accounts.map(meta),
@@ -241,10 +252,16 @@ function allInstructions(tx: TransactionRecord): LocatedInstruction[] {
   for (const group of tx.meta?.innerInstructions ?? []) {
     innerByOuter.set(Number(group.index), group.instructions)
   }
-  return tx.transaction.message.instructions.flatMap((outer, outerIndex) => [
-    locate(outer, table, outerIndex, false),
-    ...(innerByOuter.get(outerIndex) ?? []).map((ix) => locate(ix, table, outerIndex, true)),
-  ])
+  return tx.transaction.message.instructions
+    .flatMap((outer, outerIndex) => [
+      { compiled: outer, outerIndex, inner: false },
+      ...(innerByOuter.get(outerIndex) ?? []).map((compiled) => ({
+        compiled,
+        outerIndex,
+        inner: true,
+      })),
+    ])
+    .map((ix, position) => locate(ix.compiled, table, ix.outerIndex, ix.inner, position))
 }
 
 /**
@@ -488,6 +505,7 @@ export async function decodeTransaction(
       events.push({
         ...common,
         instructionIndex: error.instructionIndex,
+        position: ix.position,
         kind: 'rejected',
         ...attempt,
         failure: error.failure,
@@ -500,7 +518,12 @@ export async function decodeTransaction(
   for (const ix of ours) {
     const read = readProgramEvent(ix.data)
     if (read.status === 'event') {
-      events.push({ ...common, instructionIndex: ix.outerIndex, ...(await fromEvent(read.event)) })
+      events.push({
+        ...common,
+        instructionIndex: ix.outerIndex,
+        position: ix.position,
+        ...(await fromEvent(read.event)),
+      })
       continue
     }
     if (read.status === 'unreadable') {
@@ -518,7 +541,9 @@ export async function decodeTransaction(
       continue
     }
     const body = fromInstruction(parsed.parsed)
-    if (body !== null) events.push({ ...common, instructionIndex: ix.outerIndex, ...body })
+    if (body !== null) {
+      events.push({ ...common, instructionIndex: ix.outerIndex, position: ix.position, ...body })
+    }
   }
   return { ...common, failed, events, problems, logs }
 }

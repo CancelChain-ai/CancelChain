@@ -150,6 +150,16 @@ export const allowanceDetailSchema = z
 
 export type AllowanceDetail = z.infer<typeof allowanceDetailSchema>
 
+/**
+ * `cancelled` is the program's `cancelSubscription`: the subscription stays
+ * chargeable until `chargesStopAt`, then every charge is refused. One on-chain
+ * operation stands behind our Cancel, pause and "don't renew", so the feed names
+ * what the program did — `paused` would lie about the intent, `revoked` about
+ * the merchant still being able to charge until that date.
+ *
+ * `paused` has no on-chain counterpart and the indexer never writes it; it stays
+ * for the off-chain pause label (`FR-011`).
+ */
 export const EVENT_KINDS = [
   'created',
   'charged',
@@ -157,6 +167,7 @@ export const EVENT_KINDS = [
   'paused',
   'resumed',
   'revoked',
+  'cancelled',
 ] as const
 export type EventKind = (typeof EVENT_KINDS)[number]
 export const eventKindSchema = z.enum(EVENT_KINDS)
@@ -172,8 +183,17 @@ export const eventSchema = z
     signature: signatureSchema,
     slot: slotSchema,
     blockTime: timestampSchema,
+    /** Only on `cancelled`: when charges stop. Without the date the event says nothing. */
+    chargesStopAt: timestampSchema.nullable(),
   })
   .superRefine((value, ctx) => {
+    if ((value.kind === 'cancelled') !== (value.chargesStopAt !== null)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['chargesStopAt'],
+        message: 'a cancellation, and only a cancellation, says when charges stop',
+      })
+    }
     if (value.reason !== null && value.kind !== 'rejected') {
       ctx.addIssue({
         code: 'custom',

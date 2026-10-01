@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR, SolanaError } from '@solana/kit'
 import { describe, expect, it } from 'vitest'
 import type { DecodedTransaction, TransactionRecord } from './decode.js'
 import {
@@ -42,6 +43,8 @@ const BY_SIGNATURE = new Map(TXS.map((tx) => [tx.transaction.signatures[0] as st
 type Connection = {
   items: LogNotification[]
   after: 'drop' | 'hold'
+  /** The node never opens this socket: `logs()` neither resolves nor rejects. */
+  neverOpens?: boolean
   /** Transactions that land while this socket is open but are never delivered on it. */
   unseen?: SignatureInfo[]
 }
@@ -63,6 +66,8 @@ function scriptedSource(input: {
   notYet?: Map<string, number>
   /** How many times `getTransaction` throws for a signature (`Infinity` — always). */
   throwing?: Map<string, number>
+  /** What it throws; by default an error about the transaction itself. */
+  error?: () => Error
 }): IndexerSource & { calls: { logs: number; transaction: string[]; signaturesSince: number } } {
   const calls = { logs: 0, transaction: [] as string[], signaturesSince: 0 }
   const history = [...(input.history ?? [])]
@@ -71,6 +76,7 @@ function scriptedSource(input: {
     async logs(signal) {
       const connection = input.connections[calls.logs++]
       if (connection === undefined) throw new Error('no more connections')
+      if (connection.neverOpens) return new Promise(() => {})
       const land = (item: SignatureInfo) => {
         if (!history.some((known) => known.signature === item.signature)) history.push(item)
       }
@@ -100,7 +106,10 @@ function scriptedSource(input: {
       const throws = input.throwing?.get(signature) ?? 0
       if (throws > 0) {
         input.throwing?.set(signature, throws - 1)
-        throw new Error('Transaction version (1) is not supported by the requesting client')
+        throw (
+          input.error?.() ??
+          new Error('Transaction version (1) is not supported by the requesting client')
+        )
       }
       const left = input.notYet?.get(signature) ?? 0
       if (left > 0) {
@@ -124,7 +133,11 @@ function recordingLog() {
 async function runUntil(
   source: IndexerSource,
   done: (sunk: DecodedTransaction[]) => boolean,
-  extra: { resumeFrom?: SignatureInfo; sink?: (d: DecodedTransaction) => Promise<void> } = {},
+  extra: {
+    resumeFrom?: SignatureInfo
+    sink?: (d: DecodedTransaction) => Promise<void>
+    subscribeTimeoutMs?: number
+  } = {},
 ) {
   const controller = new AbortController()
   const sunk: DecodedTransaction[] = []
@@ -135,6 +148,7 @@ async function runUntil(
     log,
     signal: controller.signal,
     resumeFrom: extra.resumeFrom,
+    subscribeTimeoutMs: extra.subscribeTimeoutMs,
     // Yields to the event loop, so a loop that never stops still lets the test time out.
     sleep: async (ms) => {
       sleeps.push(ms)
@@ -291,6 +305,73 @@ describe('runIndexer', () => {
     })
     const { sunk } = await runUntil(source, (s) => s.length === 2, { resumeFrom: SUBSCRIBE })
     expect(sunk.map((d) => d.signature)).toEqual([CHARGE.signature, CANCEL.signature])
+  })
+
+  it('a rate-limited node is not a broken transaction: retried until it answers', async () => {
+    const rateLimited = () =>
+      new SolanaError(SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR, {
+        headers: new Headers(),
+        message: '',
+        statusCode: 429,
+      })
+    const source = scriptedSource({
+      connections: Array.from({ length: READ_ATTEMPTS + 3 }, () => ({
+        items: [],
+        after: 'hold' as const,
+      })),
+      history: [SUBSCRIBE, CHARGE, CANCEL],
+      throwing: new Map([[CHARGE.signature, READ_ATTEMPTS + 2]]),
+      error: rateLimited,
+    })
+    const { sunk, log } = await runUntil(source, (s) => s.length === 2, { resumeFrom: SUBSCRIBE })
+    expect(sunk.map((d) => d.signature)).toEqual([CHARGE.signature, CANCEL.signature])
+    expect(log.lines.filter((line) => line.level === 'error')).toEqual([])
+  })
+
+  it('progress during catch-up ends a run of failures — the backoff starts over', async () => {
+    const failOnce = new Set([CHARGE.signature, CANCEL.signature])
+    const source = scriptedSource({
+      connections: [
+        { items: [], after: 'hold' },
+        { items: [], after: 'hold' },
+        { items: [], after: 'hold' },
+      ],
+      history: [SUBSCRIBE, CHARGE, CANCEL, REJECT],
+    })
+    const { sunk, sleeps } = await runUntil(source, (s) => s.length === 3, {
+      resumeFrom: SUBSCRIBE,
+      sink: async (decoded) => {
+        if (failOnce.delete(decoded.signature)) throw new Error('rate limited')
+      },
+    })
+    expect(sunk.map((d) => d.signature)).toEqual([
+      CHARGE.signature,
+      CANCEL.signature,
+      REJECT.signature,
+    ])
+    // CHARGE stored before CANCEL failed: the second failure is a first again.
+    expect(sleeps).toEqual([reconnectDelayMs(1), reconnectDelayMs(1)])
+  })
+
+  it('a subscription that never opens is given up on, and the next one is tried', async () => {
+    const source = scriptedSource({
+      connections: [
+        { items: [], after: 'hold', neverOpens: true },
+        { items: [CHARGE], after: 'hold' },
+      ],
+    })
+    const { sunk, log } = await runUntil(source, (s) => s.length === 1, {
+      subscribeTimeoutMs: 20,
+    })
+    expect(sunk.map((d) => d.signature)).toEqual([CHARGE.signature])
+    expect(source.calls.logs).toBe(2)
+    expect(log.lines).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        message: 'subscription failed',
+        object: expect.objectContaining({ error: 'subscription did not open within 20 ms' }),
+      }),
+    )
   })
 
   it('a gap larger than catch-up allows is reported, not silently cut', async () => {

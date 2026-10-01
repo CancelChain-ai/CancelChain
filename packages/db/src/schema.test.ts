@@ -36,11 +36,15 @@ describe('migration', () => {
     }
   })
 
-  it('deduplicates events on (signature, allowance_pda, kind)', () => {
+  it('deduplicates events on (signature, position, allowance_pda)', () => {
     // Індексатор і backfill бачать ту саму транзакцію двічі за побудовою.
     expect(migrations).toContain(
-      'CREATE UNIQUE INDEX "events_signature_allowance_kind_key" ON "events" USING btree ("signature","allowance_pda","kind")',
+      'CREATE UNIQUE INDEX "events_signature_position_allowance_key" ON "events" USING btree ("signature","position","allowance_pda")',
     )
+  })
+
+  it('no longer deduplicates on kind — that key dropped two of three split-payment charges', () => {
+    expect(migrations).toContain('DROP INDEX "events_signature_allowance_kind_key"')
   })
 
   it('carries every value of every finite list into a CHECK', () => {
@@ -65,6 +69,24 @@ describe('migration', () => {
   it('does not constrain spent_in_period against cap_amount, on purpose', () => {
     // FR-025: розбіжність із мережею має дійти до екрана, а не впертися в БД.
     expect(migrations).not.toContain('spent_in_period" <=')
+  })
+
+  it('dates a cancellation, and only a cancellation', () => {
+    // Without the date a `cancelled` row says nothing: the merchant may still charge until then.
+    expect(migrations).toContain(
+      `CHECK (("events"."kind" = 'cancelled') = ("events"."charges_stop_at" is not null))`,
+    )
+  })
+
+  it('keeps the plan a subscription is on without requiring it in the catalog', () => {
+    expect(migrations).toContain('DROP CONSTRAINT "allowances_plan_pda_plans_pda_fk"')
+  })
+
+  it('stores the cursor as a transaction, not only a slot', () => {
+    // A restart catches up `until` a signature; a slot alone cannot be resumed from.
+    expect(migrations).toContain(
+      'ALTER TABLE "indexer_cursor" ADD COLUMN "last_signature" text NOT NULL',
+    )
   })
 
   it('keeps pause and scheduled end available only to plan subscriptions', () => {

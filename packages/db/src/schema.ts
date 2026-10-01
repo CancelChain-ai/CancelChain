@@ -86,7 +86,12 @@ export const allowances = pgTable(
     /** `FR-028` — до цієї дати дозвіл лишається `active` з явною позначкою. */
     endsAt: moment('ends_at'),
     status: text('status').$type<AllowanceStatus>().notNull(),
-    planPda: text('plan_pda').references(() => plans.pda),
+    /**
+     * No foreign key to `plans`, on purpose: which plan a subscription is on is
+     * a chain fact, while `plans` is the catalog — only the plans a merchant
+     * named through us. The indexer caches subscriptions to anyone's plan.
+     */
+    planPda: text('plan_pda'),
     /** Слот останньої звірки з мережею. */
     lastSlot: slot('last_slot').notNull(),
     syncedAt: moment('synced_at').notNull().defaultNow(),
@@ -131,21 +136,35 @@ export const events = pgTable(
      */
     reason: text('reason').$type<RejectReason>(),
     signature: text('signature').notNull(),
+    /**
+     * Place of the instruction behind the event in the transaction's execution
+     * order, CPIs included. One transaction can charge one permission several
+     * times — a split payment on devnet did, three times — so the signature
+     * alone does not name an event.
+     */
+    position: integer('position').notNull(),
     slot: slot('slot').notNull(),
     blockTime: moment('block_time').notNull(),
     /** Обрізаний лог: 20 рядків на успіх, 200 на відмову — інакше jsonb з'їдає free tier. */
     raw: jsonb('raw'),
+    /** Only on `cancelled`: the moment the program starts refusing charges. */
+    chargesStopAt: moment('charges_stop_at'),
   },
   (table) => [
     /**
      * Дедуплікація. Індексатор і backfill бачать ту саму транзакцію двічі за
      * побудовою; без цього обмеження стрічка дублюється після кожного
      * перезапуску воркера.
+     *
+     * `position`, not `kind`: with `(signature, allowance, kind)` the second and
+     * third charge of a split payment were dropped as duplicates (`T039`).
+     * A wallet-wide event expands into one row per permission at one position,
+     * so the permission stays in the key.
      */
-    uniqueIndex('events_signature_allowance_kind_key').on(
+    uniqueIndex('events_signature_position_allowance_key').on(
       table.signature,
+      table.position,
       table.allowancePda,
-      table.kind,
     ),
     index('events_allowance_block_time_idx').on(table.allowancePda, table.blockTime.desc()),
     check('events_kind_check', sql`${table.kind} in (${inList(EVENT_KINDS)})`),
@@ -161,6 +180,10 @@ export const events = pgTable(
     check(
       'events_charge_has_amount',
       sql`${table.kind} <> 'charged' or ${table.amount} is not null`,
+    ),
+    check(
+      'events_charges_stop_at_only_on_cancelled',
+      sql`(${table.kind} = 'cancelled') = (${table.chargesStopAt} is not null)`,
     ),
   ],
 )
@@ -187,6 +210,8 @@ export const pushSubscriptions = pgTable(
 
 export const indexerCursor = pgTable('indexer_cursor', {
   name: text('name').primaryKey(),
+  /** The last transaction stored; the indexer catches up from it after a restart. */
+  lastSignature: text('last_signature').notNull(),
   lastSlot: slot('last_slot').notNull(),
   updatedAt: moment('updated_at').notNull().defaultNow(),
 })

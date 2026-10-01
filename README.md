@@ -65,10 +65,12 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   a permission that no longer exists. The screen says so.
 - **A one-off allowance does not record what it has already spent.** The account holds
   only the remainder, and the card says that in words rather than showing a zero.
-- **The indexer only logs.** `apps/indexer` follows the program live and decodes each
-  transaction into charges, refusals with the program's error code, cancellations and
-  closures — but it writes them to its log, not to a database, and a code is not yet a
-  reason in words.
+- **The indexer stores events, but nothing reads them yet.** `apps/indexer` follows the
+  program live, decodes each transaction into charges, refusals, cancellations (with the
+  date charges stop) and closures, and writes them to Postgres with a cursor it resumes
+  from. The API and the feed do not read that table yet, and a refusal code is not yet a
+  reason in words. A permission closed before the indexer first saw it gets no history:
+  there is nothing left on chain to describe it.
 - **Nothing is hosted.** Everything runs on a laptop; there are no push notifications
   yet.
 
@@ -77,7 +79,7 @@ Said plainly, because a demo creates a false sense of proof if it is not:
 ```
 apps/web            React 18 + Vite 7 · wallet-standard connection, list, card, cancel flow
 apps/api            Hono 4 · read-only over the network, shared Zod contracts, 60 req/min
-apps/indexer        logsSubscribe worker · transaction → permission events, catch-up after drops
+apps/indexer        logsSubscribe worker · transaction → permission events → Postgres, resumes from a cursor
 packages/chain      @solana/kit 7.1.1 · account decoding, PDA derivation, instruction builders
 packages/shared     Zod schemas and error format used by both sides of the API
 packages/db         Drizzle schema (empty until the indexer exists)

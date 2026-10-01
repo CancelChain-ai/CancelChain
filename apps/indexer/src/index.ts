@@ -1,8 +1,11 @@
-import { createChainClient } from '@cancelchain/chain'
+import { createChainClient, readAllowance } from '@cancelchain/chain'
 import { signature as toSignature } from '@solana/kit'
+import { drizzle } from 'drizzle-orm/postgres-js'
 import { pino } from 'pino'
+import postgres from 'postgres'
 import type { DecodedTransaction } from './decode.js'
 import { indexerConfigFromEnv } from './env.js'
+import { createStore } from './store.js'
 import { type IndexerSource, jsonSafe, runIndexer } from './subscribe.js'
 
 /**
@@ -57,15 +60,22 @@ async function main(): Promise<void> {
     },
   }
 
-  /**
-   * Until `T039` stores them, events go to the log — one line each, so a
-   * Railway log search is already a readable feed.
-   */
-  async function logSink(decoded: DecodedTransaction): Promise<void> {
+  // `prepare: false`: the transaction pooler hands the connection to another
+  // client between transactions, and a prepared statement does not survive that.
+  // One connection: writes are sequential, and the free tier's are shared with the API.
+  const sql = postgres(config.databaseUrl, { prepare: false, max: 1, connect_timeout: 10 })
+  const store = createStore({
+    db: drizzle(sql),
+    // `confirmed`, as the notifications: at `finalized` the account would read
+    // ~13 s older than the transaction that just changed it.
+    readAllowance: (pda) => readAllowance(chain, { pda, commitment: 'confirmed' }),
+    log,
+  })
+
+  async function sink(decoded: DecodedTransaction): Promise<void> {
+    const result = await store.write(decoded)
     for (const event of decoded.events) log.info({ event: jsonSafe(event) }, 'event')
-    if (decoded.events.length === 0) {
-      log.debug({ signature: decoded.signature, failed: decoded.failed }, 'no permission events')
-    }
+    log.debug({ signature: decoded.signature, ...result }, 'stored')
   }
 
   const controller = new AbortController()
@@ -76,8 +86,18 @@ async function main(): Promise<void> {
     })
   }
 
-  log.info({ cluster: chain.cluster, program }, 'starting')
-  await runIndexer({ source, sink: logSink, log, signal: controller.signal, program })
+  // Without a cursor the indexer starts at the program's newest transaction;
+  // with one, it catches up from where the last run stopped.
+  const resumeFrom = (await store.cursor()) ?? undefined
+  log.info(
+    { cluster: chain.cluster, program, resumeFrom: resumeFrom?.signature ?? null },
+    'starting',
+  )
+  try {
+    await runIndexer({ source, sink, log, signal: controller.signal, program, resumeFrom })
+  } finally {
+    await sql.end({ timeout: 5 })
+  }
 }
 
 if (!config.useWs) {

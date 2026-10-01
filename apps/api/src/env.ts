@@ -1,5 +1,9 @@
+import { assertPooledDatabaseUrl, postgresUrl } from '@cancelchain/db'
 import { z } from 'zod'
 import { MIN_JWT_SECRET_LENGTH } from './auth.js'
+
+// The pooler guard lives in `@cancelchain/db` — the indexer opens a pool too.
+export { DirectDatabaseConnectionError, databasePort, POOLER_PORT } from '@cancelchain/db'
 
 /**
  * Оточення API. Читається з будь-якої мапи рядків, а не напряму з `process.env`,
@@ -10,24 +14,7 @@ import { MIN_JWT_SECRET_LENGTH } from './auth.js'
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const
 export type LogLevel = (typeof LOG_LEVELS)[number]
 
-/**
- * Порт transaction pooler'а Supabase. Пряме підключення на 5432 на free tier
- * дає **2 конекшени на всі сервіси**, а їх у нас двоє (`api`, `indexer`), тож
- * другий сервіс не підніметься. Плюс pgbouncer у transaction mode не вміє
- * prepared statements — звідси `prepare: false` у `db.ts`.
- */
-export const POOLER_PORT = 6543
-
 export const DEFAULT_PORT = 8080
-
-function postgresUrl(value: string): URL | null {
-  try {
-    const url = new URL(value)
-    return url.protocol === 'postgres:' || url.protocol === 'postgresql:' ? url : null
-  } catch {
-    return null
-  }
-}
 
 const databaseUrlSchema = z
   .string()
@@ -85,27 +72,9 @@ export function originsFromEnv(value: string | undefined): string[] {
     .filter((entry) => entry.length > 0)
 }
 
-export class DirectDatabaseConnectionError extends Error {
-  constructor(port: string) {
-    super(
-      `DATABASE_URL points at port ${port || '(default)'}, not the transaction pooler ` +
-        `(${POOLER_PORT}). Supabase free tier gives 2 direct connections for both services. ` +
-        'Set ALLOW_DIRECT_DATABASE=true to opt in explicitly.',
-    )
-    this.name = 'DirectDatabaseConnectionError'
-  }
-}
-
-/** Порт із рядка підключення. `null`, якщо рядок не є postgres-URL. */
-export function databasePort(databaseUrl: string): string | null {
-  return postgresUrl(databaseUrl)?.port ?? null
-}
-
 /** Кидає, якщо підключення не через pooler і виняток не дозволено явно. */
 export function assertPooledDatabase(config: ApiConfig): void {
-  if (config.allowDirectDatabase) return
-  const port = databasePort(config.databaseUrl)
-  if (port !== String(POOLER_PORT)) throw new DirectDatabaseConnectionError(port ?? '')
+  assertPooledDatabaseUrl(config.databaseUrl, config.allowDirectDatabase)
 }
 
 export class MerchantAuthNotConfiguredError extends Error {

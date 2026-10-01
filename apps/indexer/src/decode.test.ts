@@ -50,6 +50,8 @@ describe('decodeTransaction — devnet', () => {
         slot: 505227603n,
         blockTime: 1790615256n,
         instructionIndex: 1,
+        // The event's own self-CPI, sixth in execution order counting CPIs.
+        position: 5,
         kind: 'created',
         allowance: SUBSCRIPTION,
         allowanceKind: 'subscription',
@@ -299,6 +301,21 @@ describe('decodeTransaction — what emits no event', () => {
     expect(decoded.events).toMatchObject([
       { kind: 'authority-closed', owner: WALLET, authority: AUTHORITY },
     ])
+  })
+})
+
+describe('decodeTransaction — one transaction, several charges of one permission', () => {
+  it('a split payment: three charges of the same subscription, each at its own position', async () => {
+    // Someone else's integration on devnet, 2026-09-30: one subscription charged
+    // three times in one transaction, to different receivers. A feed keyed by
+    // (signature, permission, kind) kept one of the three.
+    const decoded = await decodeTransaction(fixture('charge-split-three-receivers'))
+    expect(decoded.problems).toEqual([])
+    const charges = decoded.events.filter((event) => event.kind === 'charged')
+    expect(charges).toHaveLength(3)
+    expect(new Set(charges.map((event) => event.allowance)).size).toBe(1)
+    expect(new Set(charges.map((event) => event.position)).size).toBe(3)
+    expect(charges.slice(0, 2).map((event) => event.amount)).toEqual([7_000_000n, 2_500_000n])
   })
 })
 

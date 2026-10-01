@@ -1,3 +1,4 @@
+import { DirectDatabaseConnectionError } from '@cancelchain/db'
 import { describe, expect, it } from 'vitest'
 import { indexerConfigFromEnv } from './env.js'
 
@@ -5,7 +6,9 @@ const CHAIN = {
   SOLANA_CLUSTER: 'devnet',
   SOLANA_RPC_URL: 'https://api.devnet.solana.com',
   USDC_MINT: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
+  DATABASE_URL: 'postgresql://user:pass@db.example.supabase.com:6543/postgres',
 }
+const DIRECT = 'postgresql://user:pass@db.example.supabase.com:5432/postgres'
 
 describe('indexerConfigFromEnv', () => {
   it('defaults to the WebSocket path and info logs', () => {
@@ -18,6 +21,20 @@ describe('indexerConfigFromEnv', () => {
 
   it('refuses anything but true or false', () => {
     expect(() => indexerConfigFromEnv({ ...CHAIN, INDEXER_USE_WS: '0' })).toThrow()
+  })
+
+  it('refuses to start without a database — events would go nowhere', () => {
+    expect(() => indexerConfigFromEnv({ ...CHAIN, DATABASE_URL: undefined })).toThrow()
+  })
+
+  it('refuses a direct connection unless it is opted into, like the API', () => {
+    expect(() => indexerConfigFromEnv({ ...CHAIN, DATABASE_URL: DIRECT })).toThrow(
+      DirectDatabaseConnectionError,
+    )
+    expect(
+      indexerConfigFromEnv({ ...CHAIN, DATABASE_URL: DIRECT, ALLOW_DIRECT_DATABASE: 'true' })
+        .allowDirectDatabase,
+    ).toBe(true)
   })
 
   it('refuses to start without a chain endpoint', () => {

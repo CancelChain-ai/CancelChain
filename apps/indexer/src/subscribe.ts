@@ -1,4 +1,4 @@
-import type { Address } from '@solana/kit'
+import { type Address, isSolanaError, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR } from '@solana/kit'
 import { type DecodedTransaction, decodeTransaction, type TransactionRecord } from './decode.js'
 
 /**
@@ -62,6 +62,8 @@ export type RunIndexerOptions = {
   /** Last transaction already stored — from `T039` on, the persisted cursor. */
   resumeFrom?: SignatureInfo
   sleep?: (ms: number) => Promise<void>
+  /** How long opening a subscription may take before the attempt counts as failed. */
+  subscribeTimeoutMs?: number
 }
 
 /** Reconnect delay: 1 s, 2 s, 4 s … capped at 30 s. */
@@ -85,6 +87,40 @@ export const TRANSACTION_FETCH_INTERVAL_MS = 500
  * moves on, instead of reconnecting on it forever with everything behind it stuck.
  */
 export const READ_ATTEMPTS = 3
+
+/**
+ * Seen on devnet (`T039`): after a run of 429s, kit's `subscribe()` sometimes
+ * neither opens the socket nor rejects — the worker then sits idle with no
+ * connection and no log line, looking healthy. Opening gets a deadline.
+ */
+export const SUBSCRIBE_TIMEOUT_MS = 15_000
+
+export class SubscribeTimeoutError extends Error {
+  constructor(ms: number) {
+    super(`subscription did not open within ${ms} ms`)
+    this.name = 'SubscribeTimeoutError'
+  }
+}
+
+/** `opening`, or a rejection after `ms` that also aborts the attempt. */
+async function withDeadline<T>(
+  opening: Promise<T>,
+  ms: number,
+  connection: AbortController,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      connection.abort()
+      reject(new SubscribeTimeoutError(ms))
+    }, ms)
+  })
+  try {
+    return await Promise.race([opening, deadline])
+  } finally {
+    clearTimeout(timer)
+  }
+}
 
 /** One page of `getSignaturesForAddress` — the node's own maximum. */
 export const CATCH_UP_PAGE = 1_000
@@ -155,6 +191,10 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
       readFailures.delete(item.signature)
       return { status: 'decoded', decoded }
     } catch (error) {
+      // The node refusing us (429, 5xx) says nothing about this transaction.
+      // Counting it would skip a readable transaction for good once a cursor
+      // moves past it — seen on devnet: a rate-limited catch-up dropped one.
+      if (isTransportError(error)) throw error
       const count = (readFailures.get(item.signature) ?? 0) + 1
       readFailures.set(item.signature, count)
       if (count < READ_ATTEMPTS) throw error
@@ -186,6 +226,9 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
     }
     recent.add(item.signature)
     if (last === null || item.slot >= last.slot) last = item
+    // Progress, not only a live notification, ends a run of failures: a
+    // catch-up that advances between rate limits must not back off to 30 s.
+    failures = 0
   }
 
   async function catchUp(from: SignatureInfo): Promise<void> {
@@ -239,7 +282,11 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
         last = newest ?? null
         log.info({ anchor: last?.signature ?? null }, 'anchored')
       }
-      const stream = await source.logs(connection.signal)
+      const stream = await withDeadline(
+        source.logs(connection.signal),
+        options.subscribeTimeoutMs ?? SUBSCRIBE_TIMEOUT_MS,
+        connection,
+      )
       log.info({ resumeFrom: last?.signature ?? null }, 'subscribed')
       if (last !== null) await catchUp(last)
       if (signal.aborted) break
@@ -267,6 +314,11 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
     await sleep(reconnectDelayMs(failures))
   }
   log.info({ last: last?.signature ?? null }, 'stopped')
+}
+
+/** An HTTP-level refusal of the node (rate limit, outage) — not a fault of what was asked for. */
+export function isTransportError(error: unknown): boolean {
+  return isSolanaError(error, SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR)
 }
 
 /** Logs and JSON cannot carry `bigint`; `JSON.stringify` throws on it. */

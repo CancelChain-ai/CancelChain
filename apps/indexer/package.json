@@ -13,12 +13,17 @@
   },
   "dependencies": {
     "@cancelchain/chain": "workspace:*",
+    "@cancelchain/db": "workspace:*",
+    "@cancelchain/shared": "workspace:*",
     "@solana/kit": "catalog:",
     "@solana/subscriptions": "catalog:",
+    "drizzle-orm": "0.45.2",
     "pino": "9.14.0",
+    "postgres": "3.4.9",
     "zod": "4.5.4"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.5",
     "@types/node": "22.20.1",
     "tsx": "4.23.13",
     "typescript": "5.9.3",
