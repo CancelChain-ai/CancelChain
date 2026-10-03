@@ -4,6 +4,7 @@ import {
   allowances,
   events,
   indexerCursor,
+  indexerHeartbeat,
   type NewAllowance,
   type NewEvent,
 } from '@cancelchain/db'
@@ -83,6 +84,8 @@ export type Store = {
    * left uncategorised fill themselves on the next start.
    */
   backfillReasons(): Promise<BackfillResult>
+  /** The indexer is alive and listening right now (`T041`). */
+  heartbeat(): Promise<void>
 }
 
 type ChainState =
@@ -337,7 +340,15 @@ export function createStore(options: StoreOptions): Store {
     return result
   }
 
-  return { write, cursor, backfillReasons }
+  async function heartbeat(): Promise<void> {
+    const aliveAt = now().toISOString()
+    await db
+      .insert(indexerHeartbeat)
+      .values({ name: CURSOR_NAME, aliveAt })
+      .onConflictDoUpdate({ target: indexerHeartbeat.name, set: { aliveAt } })
+  }
+
+  return { write, cursor, backfillReasons, heartbeat }
 }
 
 /** Permissions among `pdas` that carry our pause label: `508` means paused, not cancelled, there. */

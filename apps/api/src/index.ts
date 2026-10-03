@@ -9,14 +9,15 @@ import {
   toAddress,
   verifyWalletSignature,
 } from '@cancelchain/chain'
-import { allowances, indexerCursor, plans } from '@cancelchain/db'
+import { allowances, plans } from '@cancelchain/db'
 import type { Allowance, Plan } from '@cancelchain/shared'
 import { allowanceSchema, fromU64, planSchema, toU64 } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
-import { desc, eq } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 import { createApp } from './app.js'
 import { createDb, type Db } from './db.js'
 import { apiConfigFromEnv, merchantAuthConfig } from './env.js'
+import { heartbeatAt, readFeed } from './feed.js'
 import { createLogger } from './logger.js'
 
 /**
@@ -24,19 +25,6 @@ import { createLogger } from './logger.js'
  * залежностей і передача їх у `createApp`; сама логіка живе в модулях, які
  * перевіряються без сокета й без мережі.
  */
-
-/**
- * Найсвіжіша позначка курсора індексатора. До `T038` таблиця порожня, і `null`
- * тут означає рівно «індексатора ще немає» — див. `lagSeconds` у `routes/health.ts`.
- */
-async function latestCursorAt(db: Db): Promise<string | null> {
-  const rows = await db
-    .select({ updatedAt: indexerCursor.updatedAt })
-    .from(indexerCursor)
-    .orderBy(desc(indexerCursor.updatedAt))
-    .limit(1)
-  return rows[0]?.updatedAt ?? null
-}
 
 /**
  * Збережений дозвіл із кеша. До `T038` таблиця порожня, і запит завжди дає
@@ -112,7 +100,9 @@ function main(): void {
     health: {
       ping: database.ping,
       currentSlot: async () => Number(await chain.rpc.getSlot({ commitment: 'confirmed' }).send()),
-      cachedAt: () => latestCursorAt(database.db),
+      // The indexer's pulse, not its cursor: the cursor stands still whenever
+      // the program is quiet, the pulse only when the indexer is (`T041`).
+      cachedAt: () => heartbeatAt(database.db),
       startedAt,
     },
     allowances: {
@@ -125,6 +115,10 @@ function main(): void {
       get: (pda) => readAllowance(chain, { pda: toAddress(pda), commitment: 'confirmed' }),
       cached: (pda) => cachedAllowance(database.db, pda),
       settlementMint: chain.usdcMint,
+    },
+    events: {
+      feed: (pda, page) => readFeed(database.db, pda, page),
+      aliveAt: () => heartbeatAt(database.db),
     },
     signatures: {
       // Стрічка на вимогу (`T030`): сховище порожнє до `T038`, тож історія

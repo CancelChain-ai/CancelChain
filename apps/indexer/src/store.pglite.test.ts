@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { AllowanceReadOne, ReadAllowance } from '@cancelchain/chain'
 import { findSubscriptionAuthority } from '@cancelchain/chain'
-import { allowances, events, indexerCursor } from '@cancelchain/db'
+import { allowances, events, indexerCursor, indexerHeartbeat } from '@cancelchain/db'
 import { PGlite } from '@electric-sql/pglite'
 import type { Address } from '@solana/kit'
 import { eq } from 'drizzle-orm'
@@ -54,7 +54,9 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  await client.exec('TRUNCATE events, allowances, indexer_cursor RESTART IDENTITY CASCADE')
+  await client.exec(
+    'TRUNCATE events, allowances, indexer_cursor, indexer_heartbeat RESTART IDENTITY CASCADE',
+  )
 })
 
 function subscription(overrides: Partial<ReadAllowance> = {}): ReadAllowance {
@@ -665,5 +667,27 @@ describe('store — refusal categories (T040)', () => {
       ['charged', null],
       ['rejected', 'cap_exceeded'],
     ])
+  })
+})
+
+describe('store — heartbeat (T041)', () => {
+  it('one row, moved forward by every beat — whether or not the program had transactions', async () => {
+    let at = new Date('2026-10-03T12:00:00.000Z')
+    const store = createStore({
+      db,
+      readAllowance: fakeChain().read,
+      log: { info: () => {}, warn: () => {}, error: () => {} },
+      now: () => at,
+    })
+
+    await store.heartbeat()
+    at = new Date('2026-10-03T12:00:15.000Z')
+    await store.heartbeat()
+
+    const rows = await db.select().from(indexerHeartbeat)
+    expect(rows).toHaveLength(1)
+    expect(new Date(rows[0]?.aliveAt ?? '').toISOString()).toBe('2026-10-03T12:00:15.000Z')
+    // The cursor is not the pulse: no transaction, no cursor.
+    expect(await store.cursor()).toBeNull()
   })
 })

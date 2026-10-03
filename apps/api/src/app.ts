@@ -5,6 +5,7 @@ import { type Logger, requestLogger } from './logger.js'
 import { type RateLimitOptions, rateLimit } from './rateLimit.js'
 import { type AllowancesDeps, allowanceRoute, allowancesRoute } from './routes/allowances.js'
 import { type BlockhashDeps, blockhashRoute } from './routes/blockhash.js'
+import { type EventsDeps, eventsRoute } from './routes/events.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
 import { type MerchantsDeps, merchantPlansRoute, merchantSignInRoute } from './routes/merchants.js'
 import { type PlansDeps, plansRoute } from './routes/plans.js'
@@ -17,6 +18,7 @@ export type AppDeps = {
   allowances: AllowancesDeps
   blockhash: BlockhashDeps
   signatures: SignaturesDeps
+  events: EventsDeps
   merchants: MerchantsDeps
   plans: PlansDeps
   rateLimit?: RateLimitOptions
@@ -64,6 +66,7 @@ export function createApp(deps: AppDeps) {
     .route('/', allowancesRoute(deps.allowances))
     .route('/', allowanceRoute(deps.allowances))
     .route('/', signaturesRoute(deps.signatures))
+    .route('/', eventsRoute(deps.events))
     .route('/', blockhashRoute(deps.blockhash))
     .route('/', merchantSignInRoute(deps.merchants))
     .route('/', merchantPlansRoute(deps.merchants))

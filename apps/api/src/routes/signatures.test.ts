@@ -53,6 +53,10 @@ function app(signatures: Partial<AppDeps['signatures']> = {}) {
       cached: async () => null,
       settlementMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     },
+    events: {
+      feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
+      aliveAt: async () => null,
+    },
     signatures: { history: async () => history(), ...signatures },
     // Маршрути мерчанта до цих перевірок стосунку не мають; заглушка стоїть
     // лише тому, що `createApp` збирає весь застосунок, а не окрему ручку.

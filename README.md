@@ -70,8 +70,10 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   date charges stop) and closures, and writes them to Postgres with a cursor it resumes
   from. Each refusal gets a category from the pair (failing program, code); a code we do
   not map stays uncategorised and is logged, never filed under a catch-all. On a sample
-  of 52 real devnet refusals, all 52 got a category. The API and the feed do not read
-  that table yet. A permission closed before the indexer first saw it gets no history:
+  of 52 real devnet refusals, all 52 got a category. The API serves that feed at
+  `/v1/allowances/:pda/events`, with whether the indexer knows the permission and whether
+  its heartbeat is fresh; the card does not show it yet and still lists the address's
+  transactions. A permission closed before the indexer first saw it gets no history:
   there is nothing left on chain to describe it.
 - **Nothing is hosted.** Everything runs on a laptop; there are no push notifications
   yet.

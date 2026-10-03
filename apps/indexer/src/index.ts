@@ -8,6 +8,9 @@ import { indexerConfigFromEnv } from './env.js'
 import { createStore } from './store.js'
 import { type IndexerSource, jsonSafe, runIndexer } from './subscribe.js'
 
+/** Half of `EVENTS_STALE_AFTER_MS`: one missed beat does not yet read as stale. */
+const HEARTBEAT_INTERVAL_MS = 15_000
+
 /**
  * Worker entry point: read the environment, build the kit-backed source, run
  * the loop until SIGINT/SIGTERM. The logic lives in `subscribe.ts` and
@@ -96,9 +99,27 @@ async function main(): Promise<void> {
     { cluster: chain.cluster, program, resumeFrom: resumeFrom?.signature ?? null },
     'starting',
   )
+  // The heartbeat runs only while the indexer would see a charge right now;
+  // a failed write is a warning, not a reason to stop indexing.
+  let live = false
+  const beat = () => {
+    if (!live) return
+    store.heartbeat().catch((error: unknown) => {
+      log.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'heartbeat failed',
+      )
+    })
+  }
+  const pulse = setInterval(beat, HEARTBEAT_INTERVAL_MS)
+  const onLive = (next: boolean) => {
+    live = next
+    beat()
+  }
   try {
-    await runIndexer({ source, sink, log, signal: controller.signal, program, resumeFrom })
+    await runIndexer({ source, sink, log, signal: controller.signal, program, resumeFrom, onLive })
   } finally {
+    clearInterval(pulse)
     await sql.end({ timeout: 5 })
   }
 }

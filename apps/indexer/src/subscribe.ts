@@ -64,6 +64,12 @@ export type RunIndexerOptions = {
   sleep?: (ms: number) => Promise<void>
   /** How long opening a subscription may take before the attempt counts as failed. */
   subscribeTimeoutMs?: number
+  /**
+   * `true` once the subscription is open and catch-up is done — from then on
+   * every new transaction reaches the sink; `false` when that stops. Drives the
+   * heartbeat (`T041`): a live indexer is one that would see a charge now.
+   */
+  onLive?: (live: boolean) => void
 }
 
 /** Reconnect delay: 1 s, 2 s, 4 s … capped at 30 s. */
@@ -163,6 +169,7 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
   let last: SignatureInfo | null = options.resumeFrom ?? null
   const readFailures = new Map<string, number>()
   let failures = 0
+  let live = false
 
   async function fetchTransaction(signature: string): Promise<TransactionRecord | null> {
     for (let attempt = 1; attempt <= TRANSACTION_FETCH_ATTEMPTS; attempt++) {
@@ -290,6 +297,8 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
       log.info({ resumeFrom: last?.signature ?? null }, 'subscribed')
       if (last !== null) await catchUp(last)
       if (signal.aborted) break
+      live = true
+      options.onLive?.(true)
       for await (const notification of stream) {
         failures = 0
         await handle(notification)
@@ -308,6 +317,10 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
     } finally {
       signal.removeEventListener('abort', stop)
       connection.abort()
+      if (live) {
+        live = false
+        options.onLive?.(false)
+      }
     }
     if (signal.aborted) break
     failures++

@@ -176,21 +176,49 @@ export const listSignaturesResponseSchema = z.object({
 export type ListSignaturesResponse = z.infer<typeof listSignaturesResponseSchema>
 
 export const MAX_EVENTS_PAGE = 100
+export const DEFAULT_EVENTS_PAGE = 50
 
 export const listEventsQuerySchema = z.object({
+  /** Opaque: the position after the last item of the previous page. */
   cursor: z.string().min(1).optional(),
-  limit: z.coerce.number().int().min(1).max(MAX_EVENTS_PAGE).default(50),
+  limit: z.coerce.number().int().min(1).max(MAX_EVENTS_PAGE).default(DEFAULT_EVENTS_PAGE),
 })
 
+/**
+ * `GET /v1/allowances/:pda/events` (`T041`) — the indexer's feed of one
+ * permission, newest first: charges with amounts, refusals with a category.
+ *
+ * The feed is a cache, so it says how much to trust it: `tracked` whether the
+ * indexer knows the permission at all, `syncedAt`/`stale` whether the indexer
+ * is alive and listening. An empty feed means "nothing happened" only when the
+ * permission is tracked and the feed is not stale.
+ */
 export const listEventsResponseSchema = z.object({
   items: z.array(eventSchema),
   nextCursor: z.string().min(1).nullable(),
   /**
    * Стрічка впирається у вікно зберігання (`FR-029`, `SC-013`). Прапорець каже
    * інтерфейсу показати обрив із посиланням у мережу — мовчазних обривів нема.
+   *
+   * Also set when the store holds no creation of this permission: it predates
+   * the indexer, and the feed starts at its oldest stored event.
    */
   truncatedAt: timestampSchema.nullable(),
+  /**
+   * The indexer has a row for this permission. `false`: it has never seen it —
+   * not "no history"; the network may well have some (`/signatures`, `T030`).
+   */
+  tracked: z.boolean(),
+  /** The indexer's last heartbeat; `null` when it has never run against this store. */
+  syncedAt: timestampSchema.nullable(),
+  /** No heartbeat within `EVENTS_STALE_AFTER_MS`: the feed may be missing recent events. */
+  stale: z.boolean(),
 })
+
+export type ListEventsResponse = z.infer<typeof listEventsResponseSchema>
+
+/** `SC-006` gives a refusal 30 s to reach the feed; a heartbeat older than that cannot vouch for it. */
+export const EVENTS_STALE_AFTER_MS = 30_000
 
 export const streamQuerySchema = z.object({
   owner: addressSchema,

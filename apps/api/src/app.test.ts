@@ -37,6 +37,10 @@ function app(overrides: Partial<AppDeps> = {}) {
       cached: async () => null,
       settlementMint: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',
     },
+    events: {
+      feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
+      aliveAt: async () => null,
+    },
     signatures: {
       history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
     },

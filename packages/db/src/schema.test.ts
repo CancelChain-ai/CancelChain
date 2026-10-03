@@ -31,6 +31,7 @@ describe('migration', () => {
       'merchants',
       'push_subscriptions',
       'indexer_cursor',
+      'indexer_heartbeat',
     ]) {
       expect(migrations, table).toContain(`CREATE TABLE "${table}"`)
     }

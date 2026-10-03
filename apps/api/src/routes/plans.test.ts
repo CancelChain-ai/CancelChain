@@ -85,6 +85,10 @@ function app(overrides: Partial<PlansDeps> = {}) {
       cached: async () => null,
       settlementMint: MINT,
     },
+    events: {
+      feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
+      aliveAt: async () => null,
+    },
     signatures: { history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }) },
     merchants: {
       jwtSecret: 'test-secret-at-least-32-characters',

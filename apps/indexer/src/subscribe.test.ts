@@ -137,6 +137,7 @@ async function runUntil(
     resumeFrom?: SignatureInfo
     sink?: (d: DecodedTransaction) => Promise<void>
     subscribeTimeoutMs?: number
+    onLive?: (live: boolean) => void
   } = {},
 ) {
   const controller = new AbortController()
@@ -149,6 +150,7 @@ async function runUntil(
     signal: controller.signal,
     resumeFrom: extra.resumeFrom,
     subscribeTimeoutMs: extra.subscribeTimeoutMs,
+    onLive: extra.onLive,
     // Yields to the event loop, so a loop that never stops still lets the test time out.
     sleep: async (ms) => {
       sleeps.push(ms)
@@ -222,6 +224,32 @@ describe('runIndexer', () => {
     )
     // REJECT came twice (catch-up and live) and was fetched once.
     expect(source.calls.transaction.filter((s) => s === REJECT.signature)).toHaveLength(1)
+  })
+
+  it('is live only once catch-up is done, and not live from the moment the socket drops', async () => {
+    const source = scriptedSource({
+      connections: [
+        { items: [SUBSCRIBE], unseen: [CANCEL, CHARGE], after: 'drop' },
+        { items: [LATER], after: 'hold' },
+      ],
+    })
+    let live = false
+    const transitions: boolean[] = []
+    const liveWhenSunk = new Map<string, boolean>()
+    await runUntil(source, (s) => s.some((d) => d.signature === LATER.signature), {
+      onLive: (next) => {
+        live = next
+        transitions.push(next)
+      },
+      sink: async (decoded) => {
+        liveWhenSunk.set(decoded.signature, live)
+      },
+    })
+    expect(transitions).toEqual([true, false, true, false])
+    // Caught-up transactions arrive before the indexer vouches for the present.
+    expect(liveWhenSunk.get(CANCEL.signature)).toBe(false)
+    expect(liveWhenSunk.get(CHARGE.signature)).toBe(false)
+    expect(liveWhenSunk.get(LATER.signature)).toBe(true)
   })
 
   it('a drop before any transaction was seen still catches up — from the start', async () => {

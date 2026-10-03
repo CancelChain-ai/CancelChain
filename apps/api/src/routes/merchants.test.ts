@@ -73,6 +73,10 @@ function app(overrides: Partial<MerchantsDeps> = {}) {
       cached: async () => null,
       settlementMint: MINT,
     },
+    events: {
+      feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
+      aliveAt: async () => null,
+    },
     signatures: {
       history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
     },

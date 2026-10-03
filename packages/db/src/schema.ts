@@ -216,6 +216,17 @@ export const indexerCursor = pgTable('indexer_cursor', {
   updatedAt: moment('updated_at').notNull().defaultNow(),
 })
 
+/**
+ * The indexer's pulse (`T041`): written every few seconds while its log
+ * subscription is open and catch-up is done. The cursor cannot say this — it
+ * moves only when the program has transactions, so a quiet night would read as
+ * a dead indexer and a dead one as fresh until the next transaction.
+ */
+export const indexerHeartbeat = pgTable('indexer_heartbeat', {
+  name: text('name').primaryKey(),
+  aliveAt: moment('alive_at').notNull(),
+})
+
 export type MerchantRow = typeof merchants.$inferSelect
 export type PlanRow = typeof plans.$inferSelect
 export type AllowanceRow = typeof allowances.$inferSelect

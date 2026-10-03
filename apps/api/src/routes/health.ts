@@ -18,6 +18,10 @@ import type { AppEnv } from '../types.js'
  * означає не «свіжо», а «нічого немає», — тому відлік тоді йде від старту
  * процесу: щойно піднятий сервіс показує маленьке відставання (це правда), а
  * сервіс, що добу пропрацював без індексатора, показує добу.
+ *
+ * Since `T041` the mark is the indexer's heartbeat, not its cursor: the cursor
+ * stands still whenever the program is quiet, the heartbeat only when the
+ * indexer has stopped listening.
  */
 
 export const HEALTH_TIMEOUT_MS = 2_000
@@ -28,7 +32,7 @@ export type HealthDeps = {
   /** Перевірка бази — `select 1` через пулер. */
   ping: () => Promise<void>
   currentSlot: () => Promise<number>
-  /** ISO-позначка останнього оновлення курсора індексатора або `null`. */
+  /** The indexer's last heartbeat (ISO), or `null` when it never ran. */
   cachedAt: () => Promise<string | null>
   /** Момент старту процесу, мс. */
   startedAt: number
