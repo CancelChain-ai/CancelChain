@@ -273,3 +273,39 @@ describe('the signatures of one allowance', () => {
     )
   })
 })
+
+/** The indexer's feed — `T041a`. */
+describe('the events of one allowance', () => {
+  const FEED = {
+    items: [],
+    nextCursor: null,
+    truncatedAt: null,
+    tracked: false,
+    syncedAt: '2026-09-03T10:00:00.000Z',
+    stale: false,
+  }
+
+  it('asks for the newest page without a cursor', async () => {
+    const { fetch, calls } = respondWith(200, FEED)
+    const body = await createApiClient('', fetch).listEvents(PDA, null)
+
+    expect(calls[0]?.url).toBe(`/v1/allowances/${PDA}/events`)
+    expect(body.tracked).toBe(false)
+  })
+
+  it('passes the cursor through encoded', async () => {
+    const { fetch, calls } = respondWith(200, FEED)
+    await createApiClient('', fetch).listEvents(PDA, 'eyJz=+/')
+
+    expect(calls[0]?.url).toBe(`/v1/allowances/${PDA}/events?cursor=eyJz%3D%2B%2F`)
+  })
+
+  it('fails loudly when the feed does not say whether the indexer knows the permission', async () => {
+    // Without `tracked`, an empty feed cannot be told from "nothing happened".
+    const { tracked: _, ...withoutTracked } = FEED
+    const { fetch } = respondWith(200, withoutTracked)
+    await expect(createApiClient('', fetch).listEvents(PDA, null)).rejects.toBeInstanceOf(
+      ApiContractError,
+    )
+  })
+})

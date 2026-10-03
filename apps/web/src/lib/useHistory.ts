@@ -26,11 +26,16 @@ export function historyKey(id: string | null): readonly unknown[] {
 
 const RETRY_ATTEMPTS = 1
 
-export function useHistory(id: string | null): HistoryState {
+/**
+ * `enabled: false` — the screen does not need the address history (`T041a`: the
+ * indexer's feed covers the permission). Every read here is a node request, and
+ * the public node answers `429` first.
+ */
+export function useHistory(id: string | null, enabled = true): HistoryState {
   const query = useQuery({
     queryKey: historyKey(id),
     queryFn: ({ signal }) => (id === null ? Promise.resolve(null) : source.getHistory(id, signal)),
-    enabled: id !== null,
+    enabled: enabled && id !== null,
     /*
      * Стрічка не перечитується сама. Відхилену спробу в межах 30 секунд обіцяє
      * `SC-006`, і виконає її SSE з індексатора (`T042`), а не полінг звідси:

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import type { AllowanceDetail } from '@cancelchain/shared'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { PERMISSIONS } from '../lib/mockData'
 import type { AllowanceState } from '../lib/useAllowance'
+import type { FeedState } from '../lib/useFeed'
 import type { HistoryState } from '../lib/useHistory'
-import type { AddressHistoryView } from '../lib/view'
+import type { AddressHistoryView, FeedEvent } from '../lib/view'
 import { detailFromAllowance, detailFromPermission } from '../lib/view'
 import Subscription from './Subscription'
 
@@ -320,10 +321,14 @@ describe('the feed of one address', () => {
     }
   }
 
+  /** `T041a`: the address history now stands under a permission the indexer has not seen. */
   function withHistory(state: HistoryState, explorer?: (signature: string) => string | null) {
-    render(
-      <Subscription state={ready()} onBack={() => {}} history={state} explorerUrl={explorer} />,
-    )
+    const feed: FeedState = {
+      status: 'untracked',
+      freshness: { syncedAt: new Date(NOW), stale: false },
+      history: state,
+    }
+    render(<Subscription state={ready()} onBack={() => {}} feed={feed} explorerUrl={explorer} />)
   }
 
   it('says the network accepted or refused, and nothing about what it did', () => {
@@ -390,7 +395,154 @@ describe('the feed of one address', () => {
   })
 
   it('says it does not fetch a feed when there is no source for one', () => {
-    withHistory({ status: 'unavailable' })
+    render(<Subscription state={ready()} onBack={() => {}} feed={{ status: 'unavailable' }} />)
     expect(screen.getByText(/a feed we do not fetch/i)).toBeTruthy()
+  })
+
+  it('says why it shows the address and not the events', () => {
+    withHistory(history())
+    expect(screen.getByText(/The indexer has not seen this permission yet/)).toBeTruthy()
+    // Two promises, not mixed: no event wording under the address history.
+    expect(screen.queryByText('Charged')).toBeNull()
+  })
+})
+
+/**
+ * The indexer's feed on the card — `T041a`, `FR-005`. Checked: what each event
+ * did in words, a refusal's reason, the cut with a way to the network, the
+ * stale note over events that stay, and "show older" by cursor.
+ */
+describe('the feed of one permission', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+  const ADDRESS_URL = `https://explorer.example/address/${PDA}`
+
+  function event(over: Partial<FeedEvent> = {}): FeedEvent {
+    return {
+      id: '1',
+      kind: 'charged',
+      when: new Date(NOW),
+      signature: SIGNATURE,
+      slot: 400_000_001,
+      amount: 12_000_000n,
+      reason: null,
+      chargesStopAt: null,
+      ...over,
+    }
+  }
+
+  function tracked(over: Partial<Extract<FeedState, { status: 'tracked' }>> = {}): FeedState {
+    return {
+      status: 'tracked',
+      freshness: { syncedAt: new Date(NOW), stale: false },
+      events: [
+        event({ id: '3', kind: 'rejected', amount: 30_000_000n, reason: 'cap_exceeded' }),
+        event({ id: '2', amount: 7_500_000n }),
+        event({ id: '1', kind: 'created', amount: null }),
+      ],
+      truncatedAt: null,
+      older: { status: 'all' },
+      ...over,
+    }
+  }
+
+  function withFeed(feed: FeedState) {
+    render(
+      <Subscription
+        state={ready()}
+        onBack={() => {}}
+        feed={feed}
+        explorerUrl={(signature) => `https://explorer.example/tx/${signature}`}
+        explorerAddressUrl={(address) => `https://explorer.example/address/${address}`}
+      />,
+    )
+  }
+
+  it('says what each event did, how much, and why a charge was refused', () => {
+    withFeed(tracked())
+    expect(screen.getByText('Charge refused')).toBeTruthy()
+    expect(screen.getByText('Over the ceiling for this period')).toBeTruthy()
+    expect(screen.getByText('tried 30.00 USDC')).toBeTruthy()
+    expect(screen.getByText('Charged')).toBeTruthy()
+    expect(screen.getByText('7.50 USDC')).toBeTruthy()
+    expect(screen.getByText('Permission given')).toBeTruthy()
+    // A code never reaches the screen.
+    expect(screen.queryByText(/cap_exceeded|Custom/)).toBeNull()
+  })
+
+  it('links each event to its transaction', () => {
+    withFeed(tracked({ events: [event()] }))
+    const link = screen.getByRole('link')
+    expect(link.getAttribute('href')).toBe(`https://explorer.example/tx/${SIGNATURE}`)
+  })
+
+  it('says the feed is whole when it reaches the creation', () => {
+    withFeed(tracked())
+    expect(screen.getByText(/everything since the permission was given/)).toBeTruthy()
+  })
+
+  it('names the cut at the end of the feed, with a way to the network', () => {
+    withFeed(tracked({ truncatedAt: new Date(2026, 8, 1, 12, 0) }))
+    expect(screen.getByText(/keeps nothing earlier than 1 Sep 2026/)).toBeTruthy()
+    const link = screen.getByRole('link', { name: 'See the address on the network' })
+    expect(link.getAttribute('href')).toBe(ADDRESS_URL)
+    expect(screen.queryByText(/everything since the permission was given/)).toBeNull()
+  })
+
+  it('does not name the cut while older pages are still to load', () => {
+    withFeed(
+      tracked({
+        truncatedAt: new Date(2026, 8, 1, 12, 0),
+        older: { status: 'more', load: () => {} },
+      }),
+    )
+    expect(screen.queryByText(/keeps nothing earlier/)).toBeNull()
+  })
+
+  it('keeps the events under a stale note, with a way to the network', () => {
+    withFeed(tracked({ freshness: { syncedAt: new Date(), stale: true } }))
+    expect(screen.getByText(/the newest events may be missing/)).toBeTruthy()
+    expect(screen.getByText('Charge refused')).toBeTruthy()
+    const link = screen.getByRole('link', { name: 'See the address on the network' })
+    expect(link.getAttribute('href')).toBe(ADDRESS_URL)
+  })
+
+  it('says nothing about freshness when the indexer vouches for the feed', () => {
+    withFeed(tracked())
+    expect(screen.queryByText(/may be missing/)).toBeNull()
+  })
+
+  it('loads older events on request', () => {
+    const load = vi.fn()
+    withFeed(tracked({ older: { status: 'more', load } }))
+    fireEvent.click(screen.getByRole('button', { name: 'Show older' }))
+    expect(load).toHaveBeenCalledOnce()
+  })
+
+  it('cannot ask twice while older events are loading', () => {
+    withFeed(tracked({ older: { status: 'loading' } }))
+    const button = screen.getByRole('button', { name: 'Loading older…' }) as HTMLButtonElement
+    expect(button.disabled).toBe(true)
+  })
+
+  it('keeps the loaded events when older ones fail, and offers to try again', () => {
+    const load = vi.fn()
+    withFeed(tracked({ older: { status: 'failed', message: 'Too many requests.', load } }))
+    expect(screen.getByText('Too many requests.')).toBeTruthy()
+    expect(screen.getByText('Charged')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Try older again' }))
+    expect(load).toHaveBeenCalledOnce()
+  })
+
+  it('an empty tracked feed says the indexer recorded nothing, not that it failed', () => {
+    withFeed(tracked({ events: [] }))
+    expect(screen.getByText(/has recorded nothing under this permission yet/)).toBeTruthy()
+  })
+
+  it('keeps the five fields on screen when the feed fails', () => {
+    withFeed({ status: 'error', message: 'CancelChain could not read the feed.' })
+    expect(screen.getByText('CancelChain could not read the feed.')).toBeTruthy()
+    expect(screen.getByText('Recipient')).toBeTruthy()
+    expect(screen.getByText('Next charge')).toBeTruthy()
   })
 })

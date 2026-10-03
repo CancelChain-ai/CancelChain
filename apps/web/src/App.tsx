@@ -3,12 +3,12 @@ import { CancelFlow } from './chain/revoke'
 import { SubscribeFlow } from './chain/subscribe'
 import { WalletMenu } from './chain/WalletMenu'
 import { useWalletEnvironment } from './chain/WalletProvider'
-import { explorerTxUrl, shortenAddress, useWalletOwner } from './chain/wallet'
+import { explorerAddressUrl, explorerTxUrl, shortenAddress, useWalletOwner } from './chain/wallet'
 import { type Permission, SUBSCRIBE_GRANT, WALLET } from './lib/mockData'
 import { mockData, source } from './lib/source'
 import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
-import { useHistory } from './lib/useHistory'
+import { useFeed } from './lib/useFeed'
 import { useSubscribeReview } from './lib/useSubscribeReview'
 import Merchant from './pages/Merchant'
 import Subscribe, { LiveSubscribe } from './pages/Subscribe'
@@ -65,10 +65,10 @@ const App = () => {
   const allowances = useAllowances(owner, mockRevision)
   const allowance = useAllowance(selectedId, mockRevision)
   /**
-   * Стрічка картки (`T030`) — окремим запитом від самої картки: історія має
-   * право не доїхати, не забравши з собою п'ять полів `FR-002`.
+   * The card's feed (`T041a`; `T030` underneath it) — a request of its own: the
+   * feed may fail without taking the five fields of `FR-002` with it.
    */
-  const history = useHistory(selectedId)
+  const feed = useFeed(selectedId)
   const subscribeReview = useSubscribeReview(planPda, owner)
 
   const openPlan = (pda: string) => {
@@ -223,10 +223,11 @@ const App = () => {
             <Subscription
               state={allowance}
               onBack={() => setView('subscriptions')}
-              history={history}
+              feed={feed}
               // Мережу знає оточення гаманця, а не екран картки: посилання
               // будується тут і приходить туди готовим.
               explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
+              explorerAddressUrl={(address) => explorerAddressUrl(address, cluster)}
               {...demoActions}
             />
           ))}

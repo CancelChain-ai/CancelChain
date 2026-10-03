@@ -53,6 +53,7 @@ function clientReturning(response: ListAllowancesResponse): ApiClient {
     getAllowance: () => Promise.reject(new Error('the list tests do not ask for one allowance')),
     getBlockhash: () => Promise.reject(new Error('the list tests do not build a transaction')),
     listSignatures: () => Promise.reject(new Error('the list tests do not ask for history')),
+    listEvents: () => Promise.reject(new Error('the list tests do not ask for the feed')),
     getPlan: () => Promise.reject(new Error('the list tests do not read a plan')),
   }
 }
@@ -194,6 +195,7 @@ function cardClient(answer: () => Promise<GetAllowanceResponse>): ApiClient {
     getAllowance: answer,
     getBlockhash: () => Promise.reject(new Error('the card tests do not build a transaction')),
     listSignatures: () => Promise.reject(new Error('these tests ask for history explicitly')),
+    listEvents: () => Promise.reject(new Error('these tests ask for the feed explicitly')),
     getPlan: () => Promise.reject(new Error('the card tests do not read a plan')),
   }
 }
@@ -280,6 +282,7 @@ describe('the history behind one allowance', () => {
       getAllowance: () => Promise.reject(new Error('the history tests do not ask for the card')),
       getBlockhash: () => Promise.reject(new Error('the history tests do not build a transaction')),
       listSignatures: () => Promise.resolve(response),
+      listEvents: () => Promise.reject(new Error('the history tests do not ask for the feed')),
       getPlan: () => Promise.reject(new Error('the history tests do not read a plan')),
     }
   }
@@ -319,5 +322,67 @@ describe('the history behind one allowance', () => {
     // Невідомий час блоку лишається невідомим — не «зараз» і не час читання.
     expect(history?.rows[1]?.when).toBeNull()
     expect(history?.more).toBe(true)
+  })
+})
+
+/**
+ * The indexer's feed (`T041a`). Amounts become `bigint` here and only the
+ * screen formats them: the asset is the card's, and the feed does not repeat it.
+ */
+describe('the feed behind one allowance', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+
+  const EVENT = {
+    id: '7',
+    allowancePda: PDA,
+    kind: 'rejected' as const,
+    amount: '18446744073709551615',
+    reason: 'cap_exceeded' as const,
+    signature: SIGNATURE,
+    slot: 400_000_001,
+    blockTime: '2026-09-03T09:00:00.000Z',
+    chargesStopAt: null,
+  }
+
+  function feedClient(calls: (string | null)[]): ApiClient {
+    return {
+      listAllowances: () => Promise.reject(new Error('the feed tests do not ask for the list')),
+      getAllowance: () => Promise.reject(new Error('the feed tests do not ask for the card')),
+      getBlockhash: () => Promise.reject(new Error('the feed tests do not build a transaction')),
+      listSignatures: () => Promise.reject(new Error('the feed tests do not ask for history')),
+      listEvents: (_pda, cursor) => {
+        calls.push(cursor)
+        return Promise.resolve({
+          items: [EVENT],
+          nextCursor: 'next',
+          truncatedAt: '2026-09-01T00:00:00.000Z',
+          tracked: true,
+          syncedAt: null,
+          stale: true,
+        })
+      },
+      getPlan: () => Promise.reject(new Error('the feed tests do not read a plan')),
+    }
+  }
+
+  it('the mock has none, and says so as an answer', async () => {
+    expect(await createMockSource().getEvents(PDA, null)).toBeNull()
+  })
+
+  it('passes the cursor through and keeps a u64 amount whole', async () => {
+    const calls: (string | null)[] = []
+    const page = await createApiSource(feedClient(calls)).getEvents(PDA, 'abc')
+
+    expect(calls).toEqual(['abc'])
+    // Past `Number.MAX_SAFE_INTEGER`: a double would round the merchant's attempt.
+    expect(page?.events[0]?.amount).toBe(18_446_744_073_709_551_615n)
+    expect(page?.events[0]?.when.toISOString()).toBe('2026-09-03T09:00:00.000Z')
+    expect(page?.events[0]?.reason).toBe('cap_exceeded')
+    expect(page?.truncatedAt?.toISOString()).toBe('2026-09-01T00:00:00.000Z')
+    // An indexer that never ran stays unknown — not "now", not the read time.
+    expect(page?.syncedAt).toBeNull()
+    expect(page?.stale).toBe(true)
+    expect(page?.nextCursor).toBe('next')
   })
 })

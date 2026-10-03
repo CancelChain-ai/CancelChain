@@ -5,6 +5,7 @@ import {
   getPlanViewResponseSchema,
   latestBlockhashResponseSchema,
   listAllowancesResponseSchema,
+  listEventsResponseSchema,
   listSignaturesResponseSchema,
 } from '@cancelchain/shared'
 import type { z } from 'zod'
@@ -24,6 +25,7 @@ export type ListAllowancesResponse = z.infer<typeof listAllowancesResponseSchema
 export type GetAllowanceResponse = z.infer<typeof getAllowanceResponseSchema>
 export type LatestBlockhashResponse = z.infer<typeof latestBlockhashResponseSchema>
 export type ListSignaturesResponse = z.infer<typeof listSignaturesResponseSchema>
+export type ListEventsResponse = z.infer<typeof listEventsResponseSchema>
 
 /** Сервер відповів помилкою у форматі `shared`: код і повідомлення відомі. */
 export class ApiRequestError extends Error {
@@ -83,6 +85,11 @@ export interface ApiClient {
    * доїхати, не забравши з собою п'ять полів `FR-002`.
    */
   listSignatures(pda: string, limit?: number, signal?: AbortSignal): Promise<ListSignaturesResponse>
+  /**
+   * The indexer's feed of one permission (`T041`), one page at a time. `cursor`
+   * is the previous page's `nextCursor`; without it, the newest page.
+   */
+  listEvents(pda: string, cursor: string | null, signal?: AbortSignal): Promise<ListEventsResponse>
   /**
    * The plan behind the subscribe screen (`T036`). With a `subscriber`, the
    * answer also carries that wallet's side: its authority, its token account,
@@ -152,6 +159,14 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
           limit === undefined ? '' : `?limit=${limit}`
         }`,
         listSignaturesResponseSchema,
+        signal,
+      ),
+    listEvents: (pda, cursor, signal) =>
+      get(
+        `/v1/allowances/${encodeURIComponent(pda)}/events${
+          cursor === null ? '' : `?cursor=${encodeURIComponent(cursor)}`
+        }`,
+        listEventsResponseSchema,
         signal,
       ),
     getPlan: (pda, subscriber, signal) =>

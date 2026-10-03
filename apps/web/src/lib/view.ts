@@ -9,9 +9,12 @@ import type {
   AllowanceKind,
   AllowanceStatus,
   AllowanceUnreadableReason,
+  EventKind,
   ListedAllowance,
+  ListEventsResponse,
+  RejectReason,
 } from '@cancelchain/shared'
-import { SECONDS_PER_DAY, toU64 } from '@cancelchain/shared'
+import { rejectReasonLabel, SECONDS_PER_DAY, toU64 } from '@cancelchain/shared'
 import { shortenAddress } from '../chain/wallet.js'
 import type { Permission } from './mockData.js'
 
@@ -458,6 +461,119 @@ export function historyFromSignatures(response: {
     syncedAt: new Date(response.syncedAt),
     more: response.more,
   }
+}
+
+/**
+ * One event of the indexer's feed (`T041a`, `FR-005`) — unlike `HistoryRow`, it
+ * says what the transaction did. The amount stays in the asset's smallest
+ * units: the asset is the card's, and the feed does not repeat it.
+ */
+export interface FeedEvent {
+  id: string
+  kind: EventKind
+  when: Date
+  signature: string
+  slot: number
+  /** Taken by a charge, or what a refused charge tried to take. */
+  amount: bigint | null
+  /** Only on a refusal; `null` there is a program code with no category. */
+  reason: RejectReason | null
+  /** Only on `cancelled`. */
+  chargesStopAt: Date | null
+}
+
+/** One page of `GET /v1/allowances/:pda/events`. */
+export interface EventPageView {
+  /** `false`: the indexer has never seen this permission — not "nothing happened". */
+  tracked: boolean
+  /** Newest first. */
+  events: FeedEvent[]
+  nextCursor: string | null
+  /** The store keeps nothing of this permission before this moment. */
+  truncatedAt: Date | null
+  /** The indexer's last heartbeat; `null` when it has never run. */
+  syncedAt: Date | null
+  /** The heartbeat is too old to vouch for the newest events. */
+  stale: boolean
+}
+
+export function eventPageFromResponse(response: ListEventsResponse): EventPageView {
+  return {
+    tracked: response.tracked,
+    events: response.items.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      when: new Date(item.blockTime),
+      signature: item.signature,
+      slot: item.slot,
+      amount: item.amount === null ? null : toU64(item.amount),
+      reason: item.reason,
+      chargesStopAt: dateOrNull(item.chargesStopAt),
+    })),
+    nextCursor: response.nextCursor,
+    truncatedAt: dateOrNull(response.truncatedAt),
+    syncedAt: dateOrNull(response.syncedAt),
+    stale: response.stale,
+  }
+}
+
+/** What a feed row says, in words. */
+export interface FeedLine {
+  title: string
+  /** Why a charge was refused; `null` on everything else. */
+  reason: string | null
+  /** `null` when the event moved no money. */
+  amount: string | null
+  refused: boolean
+}
+
+/**
+ * The program's operations, named after what they did. `cancelled` is the
+ * program's `cancelSubscription`, which leaves the subscription chargeable
+ * until a date; `revoked` closed the permission account.
+ */
+const EVENT_TITLES = {
+  created: 'Permission given',
+  charged: 'Charged',
+  rejected: 'Charge refused',
+  paused: 'Paused',
+  resumed: 'Resumed',
+  revoked: 'Cancelled — the permission account was closed',
+  cancelled: 'Cancelled',
+} as const satisfies Record<EventKind, string>
+
+export function feedLine(event: FeedEvent, view: AllowanceView): FeedLine {
+  const refused = event.kind === 'rejected'
+  const amount =
+    event.amount === null
+      ? null
+      : refused
+        ? `tried ${formatMoney(sameAsset(view, event.amount))}`
+        : formatMoney(sameAsset(view, event.amount))
+  const title =
+    event.kind === 'cancelled' && event.chargesStopAt !== null
+      ? `Cancelled — charges stop ${dayAndClock(event.chargesStopAt)}`
+      : EVENT_TITLES[event.kind]
+  return { title, reason: refused ? rejectReasonLabel(event.reason) : null, amount, refused }
+}
+
+/**
+ * The stale note (`T041a`): the events stay, and the note says how far they are
+ * vouched for. The date joins the time once the heartbeat is from another day —
+ * a bare `14:02` from last week reads as today.
+ */
+export function feedStaleSentence(syncedAt: Date | null, now: Date): string {
+  if (syncedAt === null) {
+    return 'No running indexer has confirmed this feed yet — the newest events may be missing.'
+  }
+  const sameDay = syncedAt.toDateString() === now.toDateString()
+  const when = sameDay ? `at ${formatClock(syncedAt)}` : `on ${dayAndClock(syncedAt)}`
+  return `This feed was last confirmed ${when} — the newest events may be missing.`
+}
+
+/** The cut at the end of the feed (`T041a`; `T044` reuses it for the retention window). */
+export function feedTruncationSentence(truncatedAt: Date): string {
+  return `CancelChain keeps nothing earlier than ${formatDay(truncatedAt)} for this permission — the full history is on the network.`
 }
 
 /** Рядок вигаданої стрічки мока M0. Справжня історія приходить `HistoryRow`. */

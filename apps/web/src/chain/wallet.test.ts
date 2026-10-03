@@ -12,6 +12,7 @@ import {
   createWalletFilter,
   createWalletStateSync,
   DEFAULT_CLUSTER,
+  explorerAddressUrl,
   explorerTxUrl,
   SELECTED_WALLET_STORAGE_KEY,
   shortenAddress,
@@ -224,6 +225,25 @@ describe('explorerTxUrl', () => {
   it('does not ask the explorer for a cluster it defaults to', () => {
     expect(explorerTxUrl(SIGNATURE, 'mainnet-beta')).toBe(
       `https://explorer.solana.com/tx/${SIGNATURE}`,
+    )
+  })
+})
+
+/** The address link behind a cut or a stale feed — `T041a`. */
+describe('explorerAddressUrl', () => {
+  it('opens the address, not a transaction, on the cluster it was read from', () => {
+    expect(explorerAddressUrl(OWNER, 'devnet')).toBe(
+      `https://explorer.solana.com/address/${OWNER}?cluster=devnet`,
+    )
+  })
+
+  it('has no link for a local validator', () => {
+    expect(explorerAddressUrl(OWNER, 'localnet')).toBeNull()
+  })
+
+  it('does not ask the explorer for a cluster it defaults to', () => {
+    expect(explorerAddressUrl(OWNER, 'mainnet-beta')).toBe(
+      `https://explorer.solana.com/address/${OWNER}`,
     )
   })
 })

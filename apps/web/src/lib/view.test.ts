@@ -6,7 +6,12 @@ import {
   cardFields,
   detailFromAllowance,
   detailFromPermission,
+  eventPageFromResponse,
   everyPeriod,
+  type FeedEvent,
+  feedLine,
+  feedStaleSentence,
+  feedTruncationSentence,
   formatDay,
   formatMoney,
   formatPeriod,
@@ -617,5 +622,140 @@ describe('cancelAction and cancelWindow (T037a)', () => {
       expect(view.cancelWindow).toBeNull()
       expect(subscriptionEndingSentence(view)).toBeNull()
     }
+  })
+})
+
+/**
+ * The indexer's feed in words (`T041a`). Each line names what the program did,
+ * in the card's asset, and a refusal says why — never a code.
+ */
+describe('feedLine', () => {
+  const SIGNATURE =
+    '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk'
+
+  function event(over: Partial<FeedEvent> = {}): FeedEvent {
+    return {
+      id: '1',
+      kind: 'charged',
+      when: new Date(2026, 8, 3, 9, 0),
+      signature: SIGNATURE,
+      slot: 400_000_001,
+      amount: 12_000_000n,
+      reason: null,
+      chargesStopAt: null,
+      ...over,
+    }
+  }
+
+  const usdcView = viewFromAllowance(listed())
+
+  it('says how much a charge took, in the asset of the card', () => {
+    expect(feedLine(event(), usdcView)).toEqual({
+      title: 'Charged',
+      reason: null,
+      amount: '12.00 USDC',
+      refused: false,
+    })
+  })
+
+  it('names why a charge was refused, and what it tried to take', () => {
+    const line = feedLine(
+      event({ kind: 'rejected', amount: 30_000_000n, reason: 'cap_exceeded' }),
+      usdcView,
+    )
+    expect(line).toEqual({
+      title: 'Charge refused',
+      reason: 'Over the ceiling for this period',
+      amount: 'tried 30.00 USDC',
+      refused: true,
+    })
+  })
+
+  it('says a refusal is unrecognised instead of inventing a category', () => {
+    const line = feedLine(event({ kind: 'rejected', reason: null }), usdcView)
+    expect(line.reason).toBe('Rejected by the network — reason not recognised')
+  })
+
+  it('names the moment charges stop on a cancellation, which is not the moment of cancelling', () => {
+    const line = feedLine(
+      event({ kind: 'cancelled', amount: null, chargesStopAt: new Date(2026, 9, 28, 17, 7) }),
+      usdcView,
+    )
+    expect(line.title).toBe('Cancelled — charges stop 28 Oct, 17:07')
+    expect(line.amount).toBeNull()
+  })
+
+  it('shows no amount where no money moved, rather than a zero', () => {
+    expect(feedLine(event({ kind: 'created', amount: null }), usdcView).amount).toBeNull()
+    expect(feedLine(event({ kind: 'revoked', amount: null }), usdcView).title).toBe(
+      'Cancelled — the permission account was closed',
+    )
+  })
+
+  it('keeps an unknown asset in its smallest units', () => {
+    const foreign = viewFromAllowance(listed({ mint: OTHER_MINT, assetSupported: false }))
+    expect(feedLine(event({ amount: 1_500n }), foreign).amount).toBe(
+      formatMoney({ ...foreign.cap, amount: 1_500n }),
+    )
+    expect(foreign.cap.decimals).toBeNull()
+  })
+})
+
+describe('eventPageFromResponse', () => {
+  it('turns the page into dates and whole amounts', () => {
+    const page = eventPageFromResponse({
+      items: [
+        {
+          id: '9',
+          allowancePda: PDA,
+          kind: 'cancelled',
+          amount: null,
+          reason: null,
+          signature:
+            '5wHu1qwD4kLwYbtcSNVXrGwEA5gXtWFCbGwYRnYQ2rMFcvCqDbwWLKJHVsUqM3zJ7z3rHmxsHTvQ4rC1BEuFyRxk',
+          slot: 1,
+          blockTime: '2026-09-03T09:00:00.000Z',
+          chargesStopAt: '2026-10-28T17:07:00.000Z',
+        },
+      ],
+      nextCursor: null,
+      truncatedAt: null,
+      tracked: true,
+      syncedAt: '2026-09-03T10:00:00.000Z',
+      stale: false,
+    })
+    expect(page.events[0]?.chargesStopAt?.toISOString()).toBe('2026-10-28T17:07:00.000Z')
+    expect(page.events[0]?.amount).toBeNull()
+    expect(page.syncedAt?.toISOString()).toBe('2026-09-03T10:00:00.000Z')
+    expect(page.truncatedAt).toBeNull()
+  })
+})
+
+describe('feedStaleSentence', () => {
+  const now = new Date(2026, 9, 3, 15, 0)
+
+  it('names the hour of a heartbeat from today', () => {
+    expect(feedStaleSentence(new Date(2026, 9, 3, 14, 2), now)).toBe(
+      'This feed was last confirmed at 14:02 — the newest events may be missing.',
+    )
+  })
+
+  it('adds the day once the heartbeat is from another one', () => {
+    // A bare "14:02" from last week would read as today.
+    expect(feedStaleSentence(new Date(2026, 8, 26, 14, 2), now)).toBe(
+      'This feed was last confirmed on 26 Sep, 14:02 — the newest events may be missing.',
+    )
+  })
+
+  it('does not invent a moment for an indexer that never ran', () => {
+    expect(feedStaleSentence(null, now)).toMatch(/No running indexer has confirmed/)
+  })
+})
+
+describe('feedTruncationSentence', () => {
+  it('names the day the stored feed starts, and where the rest is', () => {
+    expect(feedTruncationSentence(new Date(2026, 8, 1, 12, 0))).toBe(
+      'CancelChain keeps nothing earlier than 1 Sep 2026 for this permission — the full history is on the network.',
+    )
   })
 })

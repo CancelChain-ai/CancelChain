@@ -155,6 +155,16 @@ export function explorerTxUrl(signature: string, cluster: Cluster): string | nul
   return cluster === 'mainnet-beta' ? base : `${base}?cluster=${cluster}`
 }
 
+/**
+ * An address in the explorer (`T041a`): where the full history of a permission
+ * lives when our feed is cut or behind. The same rules as `explorerTxUrl`.
+ */
+export function explorerAddressUrl(address: string, cluster: Cluster): string | null {
+  if (cluster === 'localnet') return null
+  const base = `https://explorer.solana.com/address/${encodeURIComponent(address)}`
+  return cluster === 'mainnet-beta' ? base : `${base}?cluster=${cluster}`
+}
+
 export const SELECTED_WALLET_STORAGE_KEY = 'cancelchain:selected-wallet'
 
 export type WalletStateSync = {

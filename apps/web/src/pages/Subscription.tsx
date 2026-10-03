@@ -1,6 +1,7 @@
 import { shortenAddress } from '../chain/wallet'
 import ConsentStrip from '../components/ConsentStrip'
 import type { AllowanceState } from '../lib/useAllowance'
+import type { FeedFreshness, FeedState, OlderState } from '../lib/useFeed'
 import type { HistoryState } from '../lib/useHistory'
 import {
   type ActivityRow,
@@ -9,6 +10,10 @@ import {
   type CardField,
   capSentence,
   cardFields,
+  type FeedEvent,
+  feedLine,
+  feedStaleSentence,
+  feedTruncationSentence,
   formatClock,
   formatDay,
   formatMoney,
@@ -39,17 +44,20 @@ interface SubscriptionProps {
   state: AllowanceState
   onBack: () => void
   /**
-   * Стрічка (`T030`). Своїм станом, а не полем картки: невдача історії не має
-   * права забрати з екрана п'ять полів `FR-002`. Немає — екран каже, що
-   * стрічки він не читає, замість того щоб показати порожню.
+   * The feed (`T041a`; the address history of `T030` when the indexer has not
+   * seen the permission). A state of its own, not a field of the card: a failed
+   * feed must not take the five fields of `FR-002` off the screen. Absent — the
+   * screen says it does not read a feed, instead of showing an empty one.
    */
-  history?: HistoryState | undefined
+  feed?: FeedState | undefined
   /**
    * Посилання на транзакцію в оглядачі. Приходить ззовні, бо мережу знає
    * оточення гаманця, а не цей екран; `null` з неї — оглядача для цієї мережі
    * немає (локальний вузол).
    */
   explorerUrl?: ((signature: string) => string | null) | undefined
+  /** The same for an address: where the full history lives when the feed is cut or behind. */
+  explorerAddressUrl?: ((address: string) => string | null) | undefined
   /**
    * Дії. Кожна з них існує на екрані рівно тоді, коли є що викликати: кнопка,
    * яка нічого не робить, гірша за її відсутність. На справжніх даних дій поки
@@ -308,37 +316,222 @@ const MockActivity = ({ rows }: { rows: ActivityRow[] }) => (
   </>
 )
 
-const Activity = ({
-  detail,
+/** The address history of `T030` in each of its states. */
+const AddressHistory = ({
   history,
   explorerUrl,
 }: {
-  detail: AllowanceDetailView
-  history: HistoryState | undefined
+  history: HistoryState
   explorerUrl: ((signature: string) => string | null) | undefined
-}) => (
-  <>
-    <h2 className="mt-12 text-[13px] uppercase tracking-[0.08em] text-ink/55">Activity</h2>
-    {detail.activity !== null ? (
-      <MockActivity rows={detail.activity} />
-    ) : history === undefined || history.status === 'unavailable' ? (
-      <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
-        Charges and refused attempts are not read on this screen. That is a feed we do not fetch —
-        not a history that is empty.
+}) =>
+  history.status === 'unavailable' ? (
+    <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
+      Charges and refused attempts are not read on this screen. That is a feed we do not fetch — not
+      a history that is empty.
+    </p>
+  ) : history.status === 'loading' ? (
+    <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
+      Reading the transactions that touched this address…
+    </p>
+  ) : history.status === 'error' ? (
+    // Стрічка не доїхала — і це сказано про стрічку. П'ять полів `FR-002`
+    // лишаються на екрані: вони прочитані іншим запитом і від цього не залежать.
+    <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-rust">{history.message}</p>
+  ) : (
+    <HistoryFeed history={history.history} explorerUrl={explorerUrl} />
+  )
+
+const NetworkLink = ({ url }: { url: string | null }) =>
+  url === null ? null : (
+    <>
+      {' '}
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="whitespace-nowrap text-ink/70 underline underline-offset-4 hover:text-ink"
+      >
+        See the address on the network
+      </a>
+    </>
+  )
+
+/**
+ * A heartbeat too old to vouch for the head of the feed (`T041a`). The events
+ * stay: they are still true, only possibly not the newest.
+ */
+const StaleNote = ({
+  freshness,
+  networkUrl,
+}: {
+  freshness: FeedFreshness
+  networkUrl: string | null
+}) =>
+  freshness.stale ? (
+    <p className="mt-3 max-w-[520px] text-[12px] leading-relaxed text-amber">
+      {feedStaleSentence(freshness.syncedAt, new Date())}
+      <NetworkLink url={networkUrl} />
+    </p>
+  ) : null
+
+const FeedRow = ({
+  event,
+  detail,
+  explorerUrl,
+}: {
+  event: FeedEvent
+  detail: AllowanceDetailView
+  explorerUrl: ((signature: string) => string | null) | undefined
+}) => {
+  const line = feedLine(event, detail)
+  const url = explorerUrl?.(event.signature) ?? null
+  const short = shortenAddress(event.signature)
+  return (
+    // Narrow: time and amount on one line, what happened under them. Wide: one
+    // row, with the amount moved last.
+    <div className="grid grid-cols-[1fr_auto] items-baseline gap-x-4 gap-y-1 border-b border-hairline py-3 text-[13px] sm:grid-cols-[120px_1fr_auto]">
+      <span className="tnum text-ink/55">{`${shortDay(event.when)} ${formatClock(event.when)}`}</span>
+      <span
+        className={`justify-self-end tnum sm:order-last ${line.refused ? 'text-rust' : 'text-ink'}`}
+      >
+        {line.amount ?? ''}
+      </span>
+      <div className="col-span-2 min-w-0 sm:col-span-1">
+        <div className={line.refused ? 'text-rust' : 'text-ink/80'}>{line.title}</div>
+        {line.reason !== null && <div className="mt-[2px] text-rust/80">{line.reason}</div>}
+        <div className="mt-1 font-mono text-[12px] tnum">
+          {url === null ? (
+            <span className="text-ink/45">{short}</span>
+          ) : (
+            <a
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="text-ink/45 underline underline-offset-4 hover:text-ink"
+            >
+              {short}
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const ACTION_SMALL =
+  'rounded-md border border-ink px-3 py-[7px] text-[13px] transition-colors duration-150 hover:bg-ink/[0.06] disabled:cursor-default disabled:border-hairline disabled:text-ink/45 disabled:hover:bg-transparent'
+
+/**
+ * The end of the loaded feed: more to load, or the honest end — the cut
+ * (`truncatedAt`) with a way to the network, or the creation of the permission.
+ */
+const FeedEnd = ({
+  older,
+  truncatedAt,
+  hasEvents,
+  networkUrl,
+}: {
+  older: OlderState
+  truncatedAt: Date | null
+  hasEvents: boolean
+  networkUrl: string | null
+}) => {
+  if (older.status === 'more' || older.status === 'loading') {
+    return (
+      <button
+        type="button"
+        className={`mt-4 ${ACTION_SMALL}`}
+        disabled={older.status === 'loading'}
+        onClick={older.status === 'more' ? older.load : undefined}
+      >
+        {older.status === 'loading' ? 'Loading older…' : 'Show older'}
+      </button>
+    )
+  }
+  if (older.status === 'failed') {
+    return (
+      <div className="mt-4">
+        <p className="max-w-[520px] text-[12px] leading-relaxed text-rust">{older.message}</p>
+        <button type="button" className={`mt-2 ${ACTION_SMALL}`} onClick={older.load}>
+          Try older again
+        </button>
+      </div>
+    )
+  }
+  if (truncatedAt !== null) {
+    return (
+      <p className="mt-3 max-w-[520px] text-[12px] leading-relaxed text-ink/55">
+        {feedTruncationSentence(truncatedAt)}
+        <NetworkLink url={networkUrl} />
       </p>
-    ) : history.status === 'loading' ? (
-      <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
-        Reading the transactions that touched this address…
-      </p>
-    ) : history.status === 'error' ? (
-      // Стрічка не доїхала — і це сказано про стрічку. П'ять полів `FR-002`
-      // лишаються на екрані: вони прочитані іншим запитом і від цього не залежать.
-      <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-rust">{history.message}</p>
-    ) : (
-      <HistoryFeed history={history.history} explorerUrl={explorerUrl} />
-    )}
-  </>
-)
+    )
+  }
+  return hasEvents ? (
+    <p className="mt-3 text-[12px] text-ink/45">
+      That is everything since the permission was given.
+    </p>
+  ) : null
+}
+
+const Activity = ({
+  detail,
+  feed,
+  explorerUrl,
+  explorerAddressUrl,
+}: {
+  detail: AllowanceDetailView
+  feed: FeedState | undefined
+  explorerUrl: ((signature: string) => string | null) | undefined
+  explorerAddressUrl: ((address: string) => string | null) | undefined
+}) => {
+  const networkUrl = detail.address === null ? null : (explorerAddressUrl?.(detail.address) ?? null)
+  return (
+    <>
+      <h2 className="mt-12 text-[13px] uppercase tracking-[0.08em] text-ink/55">Activity</h2>
+      {detail.activity !== null ? (
+        <MockActivity rows={detail.activity} />
+      ) : feed === undefined || feed.status === 'unavailable' ? (
+        <AddressHistory history={{ status: 'unavailable' }} explorerUrl={explorerUrl} />
+      ) : feed.status === 'loading' ? (
+        <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
+          Reading what happened under this permission…
+        </p>
+      ) : feed.status === 'error' ? (
+        <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-rust">{feed.message}</p>
+      ) : feed.status === 'untracked' ? (
+        <>
+          <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/80">
+            The indexer has not seen this permission yet, so charges and refusals are not named
+            here. Below is what the network itself keeps for its address.
+          </p>
+          <StaleNote freshness={feed.freshness} networkUrl={networkUrl} />
+          <AddressHistory history={feed.history} explorerUrl={explorerUrl} />
+        </>
+      ) : (
+        <>
+          <StaleNote freshness={feed.freshness} networkUrl={networkUrl} />
+          {feed.events.length === 0 ? (
+            <p className="mt-3 max-w-[520px] text-[13px] leading-relaxed text-ink/55">
+              The indexer has recorded nothing under this permission yet.
+            </p>
+          ) : (
+            <div className="mt-3 border-t border-hairline">
+              {feed.events.map((event) => (
+                <FeedRow key={event.id} event={event} detail={detail} explorerUrl={explorerUrl} />
+              ))}
+            </div>
+          )}
+          <FeedEnd
+            older={feed.older}
+            truncatedAt={feed.truncatedAt}
+            hasEvents={feed.events.length > 0}
+            networkUrl={networkUrl}
+          />
+        </>
+      )}
+    </>
+  )
+}
 
 const ACTION_BASE =
   'rounded-md border border-ink px-4 py-[10px] text-[13px] transition-colors duration-150 hover:bg-ink/[0.06]'
@@ -351,8 +544,9 @@ const Card = ({
   onCancelNow,
   onResume,
   onKeep,
-  history,
+  feed,
   explorerUrl,
+  explorerAddressUrl,
 }: {
   detail: AllowanceDetailView
   refreshFailed: string | null
@@ -483,7 +677,12 @@ const Card = ({
         ))}
       </div>
 
-      <Activity detail={detail} history={history} explorerUrl={explorerUrl} />
+      <Activity
+        detail={detail}
+        feed={feed}
+        explorerUrl={explorerUrl}
+        explorerAddressUrl={explorerAddressUrl}
+      />
 
       {actions.length > 0 && (
         <div className="mt-10 flex flex-col gap-3 sm:flex-row">

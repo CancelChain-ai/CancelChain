@@ -14,6 +14,8 @@ import {
   type AllowanceView,
   detailFromAllowance,
   detailFromPermission,
+  type EventPageView,
+  eventPageFromResponse,
   historyFromSignatures,
   viewFromAllowance,
   viewFromPermission,
@@ -99,6 +101,12 @@ export interface AllowanceSource {
    */
   getHistory(id: string, signal?: AbortSignal): Promise<AddressHistoryView | null>
   /**
+   * The indexer's feed of the permission (`T041a`), one page per call. `null` —
+   * no network behind the source, as with `getHistory`. A permission the
+   * indexer has never seen is a page with `tracked: false`, not a failure.
+   */
+  getEvents(id: string, cursor: string | null, signal?: AbortSignal): Promise<EventPageView | null>
+  /**
    * The plan behind the subscribe screen (`T036`). `null` for the source itself —
    * the mock has no network, and its subscribe screen stays the M0 prototype.
    * The read answers `null` when there is no plan at that address.
@@ -162,6 +170,7 @@ export function createMockSource(): AllowanceSource {
     // Мережі за моком немає, тож і історії адреси немає: вигадана стрічка
     // приїжджає в самій картці (`detail.activity`).
     getHistory: () => Promise.resolve(null),
+    getEvents: () => Promise.resolve(null),
     plans: null,
   }
 }
@@ -227,6 +236,9 @@ export function createApiSource(client: ApiClient): AllowanceSource {
     },
     async getHistory(id, signal) {
       return historyFromSignatures(await client.listSignatures(id, undefined, signal))
+    },
+    async getEvents(id, cursor, signal) {
+      return eventPageFromResponse(await client.listEvents(id, cursor, signal))
     },
     plans: {
       async get(pda, subscriber, signal) {
