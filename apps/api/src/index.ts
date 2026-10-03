@@ -9,12 +9,13 @@ import {
   toAddress,
   verifyWalletSignature,
 } from '@cancelchain/chain'
-import { allowances, plans } from '@cancelchain/db'
-import type { Allowance, Plan } from '@cancelchain/shared'
-import { allowanceSchema, fromU64, planSchema, toU64 } from '@cancelchain/shared'
+import { plans } from '@cancelchain/db'
+import type { Plan } from '@cancelchain/shared'
+import { fromU64, planSchema, toU64 } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app.js'
+import { readCachedAllowance } from './cache.js'
 import { createDb, type Db } from './db.js'
 import { apiConfigFromEnv, merchantAuthConfig } from './env.js'
 import { heartbeatAt, readFeed } from './feed.js'
@@ -25,20 +26,6 @@ import { createLogger } from './logger.js'
  * залежностей і передача їх у `createApp`; сама логіка живе в модулях, які
  * перевіряються без сокета й без мережі.
  */
-
-/**
- * Збережений дозвіл із кеша. До `T038` таблиця порожня, і запит завжди дає
- * `null` — але не заглушка: рядок з'явиться в ту саму мить, коли індексатор
- * почне писати, і звірка (`FR-024`) запрацює без правок у маршруті.
- *
- * Схема зі `shared` проганяється й тут: рядок у базі писав інший процес, і
- * довіряти його формі на слово означало б пустити невалідний статус на картку.
- */
-async function cachedAllowance(db: Db, pda: string): Promise<Allowance | null> {
-  const rows = await db.select().from(allowances).where(eq(allowances.pda, pda)).limit(1)
-  const row = rows[0]
-  return row === undefined ? null : allowanceSchema.parse(row)
-}
 
 /**
  * Рядок каталогу планів. Назва — єдине, що прийшло від мерчанта; решта полів
@@ -113,7 +100,7 @@ function main(): void {
       // longer than `SC-010` allows (`T037`).
       list: (owner) => readAllowances(chain, { owner: toAddress(owner), commitment: 'confirmed' }),
       get: (pda) => readAllowance(chain, { pda: toAddress(pda), commitment: 'confirmed' }),
-      cached: (pda) => cachedAllowance(database.db, pda),
+      cached: (pda) => readCachedAllowance(database.db, pda),
       settlementMint: chain.usdcMint,
     },
     events: {

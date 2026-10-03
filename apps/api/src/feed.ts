@@ -59,7 +59,7 @@ export function decodeCursor(cursor: string): Key {
 }
 
 /** Postgres answers `2026-10-03 12:00:00+00`; the contract speaks ISO 8601. */
-function iso(moment: string): string {
+export function iso(moment: string): string {
   return new Date(moment).toISOString()
 }
 
