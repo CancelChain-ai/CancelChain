@@ -10,6 +10,7 @@ import {
   AccountDiscriminator,
   DELEGATOR_OFFSET,
   getPlanDecoder,
+  getSubscriptionAuthorityDecoder,
   PLAN_SIZE,
   type Plan,
   type RawProgramAccount,
@@ -24,7 +25,7 @@ import {
   UndecodableAccountError,
   UnsupportedVersionError,
 } from './decode.js'
-import { findSubscription } from './pda.js'
+import { findSubscription, findSubscriptionAuthority } from './pda.js'
 
 /**
  * Читання **всіх** дозволів гаманця — `FR-001`, `FR-006`.
@@ -328,6 +329,73 @@ async function indexPlans(
   }
 }
 
+/**
+ * Whether the wallet's subscription authority still backs a permission.
+ *
+ * Every permission names the authority it was created under through
+ * `header.initId`. Closing the authority ("revoke everything in this mint with
+ * one signature") or re-creating it rotates that id, and from then on the
+ * program refuses every charge (`103` when the authority is gone, `136` when it
+ * was re-created) — while the permission account itself stays untouched and
+ * decodes as live. Without this check such a permission reads `active`: the
+ * card would promise money can still be taken when the protocol already refuses
+ * it (`FR-022`, `SC-009`; found on devnet, 2026-10-03).
+ */
+export type AuthorityState = 'live' | 'closed' | 'rotated'
+
+/** Where each permission's authority lives: stored for fixed/recurring, derived for a subscription. */
+async function authorityAddresses(
+  decoded: readonly DecodedDelegation[],
+  planRefs: ReadonlyMap<Address, PlanRef>,
+): Promise<Map<Address, Address>> {
+  const byPermission = new Map<Address, Address>()
+  for (const entry of decoded) {
+    if (entry.kind === 'fixed' || entry.kind === 'recurring') {
+      byPermission.set(entry.address, entry.data.subscriptionAuthority)
+    } else if (entry.kind === 'subscription') {
+      const plan = planRefs.get(entry.address)
+      // No plan, no mint: the permission becomes a named `unreadable` anyway.
+      if (plan === undefined) continue
+      const { address } = await findSubscriptionAuthority({
+        user: entry.data.header.delegator,
+        tokenMint: plan.mint,
+      })
+      byPermission.set(entry.address, address)
+    }
+  }
+  return byPermission
+}
+
+async function authorityStates(
+  reader: AllowanceReader,
+  decoded: readonly DecodedDelegation[],
+  planRefs: ReadonlyMap<Address, PlanRef>,
+  commitment: Commitment | undefined,
+): Promise<Map<Address, AuthorityState>> {
+  const byPermission = await authorityAddresses(decoded, planRefs)
+  const states = new Map<Address, AuthorityState>()
+  if (byPermission.size === 0) return states
+  const { accounts } = await readAccounts(reader, [...new Set(byPermission.values())], commitment)
+  const initIds = new Map<Address, bigint>()
+  for (const raw of accounts) {
+    if (raw.account.owner !== reader.programAddress) continue
+    const data = toEncodedAccount(raw, reader.programAddress).data
+    if (data[0] !== AccountDiscriminator.SubscriptionAuthority) continue
+    initIds.set(raw.pubkey, getSubscriptionAuthorityDecoder().decode(data).initId)
+  }
+  for (const entry of decoded) {
+    if (entry.kind === 'unknown') continue
+    const authority = byPermission.get(entry.address)
+    if (authority === undefined) continue
+    const initId = initIds.get(authority)
+    states.set(
+      entry.address,
+      initId === undefined ? 'closed' : initId === entry.data.header.initId ? 'live' : 'rotated',
+    )
+  }
+  return states
+}
+
 function unreadableFrom(
   address: Address,
   reason: UnreadableReason,
@@ -391,7 +459,8 @@ export async function readAllowances(
     commitment: options.commitment,
   })
 
-  const { allowances, unreadable } = convert(reader, decoded, planRefs, {
+  const authorities = await authorityStates(reader, decoded, planRefs, options.commitment)
+  const { allowances, unreadable } = convert(reader, decoded, planRefs, authorities, {
     slot,
     syncedAt,
     ...(options.now === undefined ? {} : { now: options.now }),
@@ -410,6 +479,7 @@ function convert(
   reader: AllowanceReader,
   decoded: readonly DecodedDelegation[],
   planRefs: ReadonlyMap<Address, PlanRef>,
+  authorities: ReadonlyMap<Address, AuthorityState>,
   context: { slot: number; syncedAt: string; now?: Date },
 ): { allowances: ReadAllowance[]; unreadable: UnreadableAllowance[] } {
   const allowances: ReadAllowance[] = []
@@ -428,7 +498,13 @@ function convert(
         ...(plan === undefined ? {} : { plan }),
         ...(context.now === undefined ? {} : { now: context.now }),
       })
-      allowances.push({ ...allowance, assetSupported: allowance.mint === reader.usdcMint })
+      // A dead authority outranks whatever the account's own fields say.
+      const dead = (authorities.get(entry.address) ?? 'live') !== 'live'
+      allowances.push({
+        ...allowance,
+        ...(dead ? { status: 'revoked' as const, pausedAt: null } : {}),
+        assetSupported: allowance.mint === reader.usdcMint,
+      })
     } catch (error) {
       unreadable.push(unreadableFrom(entry.address, reasonFor(error), error))
     }
@@ -501,7 +577,8 @@ export async function readAllowance(
     commitment: options.commitment,
   })
 
-  const { allowances, unreadable } = convert(reader, [decoded], planRefs, {
+  const authorities = await authorityStates(reader, [decoded], planRefs, options.commitment)
+  const { allowances, unreadable } = convert(reader, [decoded], planRefs, authorities, {
     slot,
     syncedAt,
     ...(options.now === undefined ? {} : { now: options.now }),

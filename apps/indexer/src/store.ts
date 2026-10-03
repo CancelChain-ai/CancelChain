@@ -159,9 +159,18 @@ export function createStore(options: StoreOptions): Store {
               )
           ).map((row) => row.pda)
 
+    // Permissions a closed authority took down. They are read again below: with
+    // `T040a` the chain read itself says `revoked`, and the cache follows it.
+    const underClosed = new Map<IndexedEvent, string[]>()
+    for (const event of authorityEvents) {
+      underClosed.set(event, await permissionsUnder(db, event.owner, event.authority))
+    }
+
     // Chain reads happen before the database transaction: holding a pooled
     // connection across RPC round-trips starves the other service.
-    const states = await chainStates([...new Set([...touched, ...onUpdatedPlans])])
+    const states = await chainStates([
+      ...new Set([...touched, ...onUpdatedPlans, ...[...underClosed.values()].flat()]),
+    ])
 
     return db.transaction(async (tx) => {
       for (const [pda, state] of states) {
@@ -182,7 +191,7 @@ export function createStore(options: StoreOptions): Store {
         raw: { ...logs, ...detailOf(event) },
       }))
       for (const event of authorityEvents) {
-        for (const pda of await permissionsUnder(tx, event.owner, event.authority)) {
+        for (const pda of underClosed.get(event) ?? []) {
           pending.push({
             ...base,
             allowancePda: pda,
@@ -395,8 +404,12 @@ async function markClosed(tx: Tx, pda: string, slot: number, at: Date): Promise<
  * live rows whose mint derives to that authority. The accounts themselves are
  * not touched on chain — their `init_id` simply no longer matches.
  */
-async function permissionsUnder(tx: Tx, owner: Address, authority: Address): Promise<string[]> {
-  const rows = await tx
+async function permissionsUnder(
+  db: StoreDb,
+  owner: Address,
+  authority: Address,
+): Promise<string[]> {
+  const rows = await db
     .select({ pda: allowances.pda, mint: allowances.mint })
     .from(allowances)
     .where(and(eq(allowances.owner, owner), ne(allowances.status, 'revoked')))

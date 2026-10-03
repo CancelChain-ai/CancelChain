@@ -7,6 +7,7 @@ import {
   getFixedDelegationEncoder,
   getPlanEncoder,
   getRecurringDelegationEncoder,
+  getSubscriptionAuthorityEncoder,
   getSubscriptionDelegationEncoder,
   type HeaderArgs,
   PLAN_SIZE,
@@ -19,7 +20,7 @@ import {
 } from '@solana/subscriptions'
 import { describe, expect, it } from 'vitest'
 import { createChainClient, PROGRAM_ADDRESS } from './client.js'
-import { findSubscription } from './pda.js'
+import { findSubscription, findSubscriptionAuthority } from './pda.js'
 import {
   type AllowanceReader,
   type ProgramAccountsRpc,
@@ -164,6 +165,35 @@ type Call =
   | { kind: 'program'; program: Address; config: ProgramAccountsConfig }
   | { kind: 'multiple'; addresses: readonly Address[] }
 
+/** The authority a subscription of `OWNER` in `MINT_A` answers to — derived, as on chain. */
+const SUB_AUTHORITY = (await findSubscriptionAuthority({ user: OWNER, tokenMint: MINT_A })).address
+
+function authorityAccount(
+  address: Address,
+  tokenMint: Address,
+  initId = 7n,
+  owner: Address = PROGRAM_ADDRESS,
+): RawProgramAccount {
+  return account(
+    address,
+    getSubscriptionAuthorityEncoder().encode({
+      discriminator: AccountDiscriminator.SubscriptionAuthority,
+      user: OWNER,
+      tokenMint,
+      payer: PAYER,
+      bump: 255,
+      initId,
+    }),
+    owner,
+  )
+}
+
+/** Both authorities alive, with the `initId` every permission here was created under. */
+const LIVE_AUTHORITIES = [
+  authorityAccount(AUTHORITY, MINT_A),
+  authorityAccount(SUB_AUTHORITY, MINT_A),
+]
+
 type World = {
   /** Що віддасть запит по дозволах власника. */
   delegations?: RawProgramAccount[]
@@ -171,6 +201,8 @@ type World = {
   atAddress?: RawProgramAccount[]
   /** Що віддасть повний прохід по планах. */
   allPlans?: RawProgramAccount[]
+  /** Subscription authorities on chain (`T040a`). Live ones unless a test says otherwise. */
+  authorities?: RawProgramAccount[]
 }
 
 /**
@@ -179,7 +211,15 @@ type World = {
  */
 function fakeRpc(world: World, slot: Slot = SLOT) {
   const calls: Call[] = []
-  const byAddress = new Map((world.atAddress ?? []).map((raw) => [raw.pubkey, raw]))
+  /** Authority reads, kept apart: the tests above them count reads of permissions and plans. */
+  const authorityCalls: (readonly Address[])[] = []
+  const authorityAddresses = new Set([AUTHORITY, SUB_AUTHORITY])
+  const byAddress = new Map(
+    [...(world.atAddress ?? []), ...(world.authorities ?? LIVE_AUTHORITIES)].map((raw) => [
+      raw.pubkey,
+      raw,
+    ]),
+  )
   const rpc: ProgramAccountsRpc = {
     getProgramAccounts(program, config) {
       calls.push({ kind: 'program', program, config })
@@ -188,13 +228,17 @@ function fakeRpc(world: World, slot: Slot = SLOT) {
       return { send: async () => ({ context: { slot }, value }) }
     },
     getMultipleAccounts(addresses) {
-      calls.push({ kind: 'multiple', addresses })
+      if (addresses.every((address) => authorityAddresses.has(address))) {
+        authorityCalls.push(addresses)
+      } else {
+        calls.push({ kind: 'multiple', addresses })
+      }
       const value = addresses.map((address) => byAddress.get(address)?.account ?? null)
       return { send: async () => ({ context: { slot }, value }) }
     },
   }
   const reader: AllowanceReader = { rpc, programAddress: PROGRAM_ADDRESS, usdcMint: MINT_A }
-  return { reader, calls }
+  return { reader, calls, authorityCalls }
 }
 
 const read = (reader: AllowanceReader, options: { fullPlanScan?: boolean } = {}) =>
@@ -693,5 +737,66 @@ describe('readAllowance — один дозвіл за адресою', () => {
 
     expect(result.allowance?.mint).toBe(MINT_B)
     expect(result.allowance?.assetSupported).toBe(false)
+  })
+})
+
+describe('subscription authority — a permission it no longer backs is revoked (T040a)', () => {
+  const statusOf = async (world: World, pda: Address) => {
+    const { reader } = fakeRpc(world)
+    const listed = (await read(reader)).allowances.find((entry) => entry.pda === pda)
+    const one = (await readAllowance(reader, { pda, now: NOW })).allowance
+    // The card and the list read the same bytes the same way.
+    expect(one?.status).toBe(listed?.status)
+    return listed?.status
+  }
+  const subscriptionWorld = (authorities: RawProgramAccount[]): World => ({
+    delegations: [subscriptionAccount()],
+    atAddress: [subscriptionAccount(), planA()],
+    authorities,
+  })
+
+  it('a live authority with the same initId leaves the permission as the chain says', async () => {
+    expect(await statusOf(subscriptionWorld(LIVE_AUTHORITIES), SUB_PDA)).toBe('active')
+  })
+
+  it('the authority was closed — "revoke everything" — so the subscription is revoked', async () => {
+    // devnet, 2026-10-03: subscription `8N6FWY…` decoded as active, its authority was gone.
+    expect(await statusOf(subscriptionWorld([]), SUB_PDA)).toBe('revoked')
+  })
+
+  it('the authority was re-created with a new initId — the old permission is dead', async () => {
+    const rotated = [authorityAccount(SUB_AUTHORITY, MINT_A, 8n)]
+    expect(await statusOf(subscriptionWorld(rotated), SUB_PDA)).toBe('revoked')
+  })
+
+  it('an account at the authority address that the program does not own is no authority', async () => {
+    const impostor = [authorityAccount(SUB_AUTHORITY, MINT_A, 7n, NOT_THE_PROGRAM)]
+    expect(await statusOf(subscriptionWorld(impostor), SUB_PDA)).toBe('revoked')
+  })
+
+  it('fixed and recurring answer to the authority stored in the account', async () => {
+    const world: World = {
+      delegations: [fixedAccount(), recurringAccount()],
+      atAddress: [fixedAccount(), recurringAccount()],
+      authorities: [],
+    }
+    expect(await statusOf(world, FIXED_PDA)).toBe('revoked')
+    expect(await statusOf(world, RECURRING_PDA)).toBe('revoked')
+    expect(await statusOf({ ...world, authorities: LIVE_AUTHORITIES }, FIXED_PDA)).toBe('active')
+  })
+
+  it('a revoked permission keeps no pause label', async () => {
+    const { reader } = fakeRpc(subscriptionWorld([]))
+    expect((await read(reader)).allowances[0]).toMatchObject({ status: 'revoked', pausedAt: null })
+  })
+
+  it('reads each authority once, in one request, whatever the number of permissions', async () => {
+    const { reader, authorityCalls } = fakeRpc({
+      delegations: [fixedAccount(), recurringAccount(), subscriptionAccount()],
+      atAddress: [planA()],
+    })
+    await read(reader)
+    expect(authorityCalls).toHaveLength(1)
+    expect([...(authorityCalls[0] ?? [])].sort()).toEqual([AUTHORITY, SUB_AUTHORITY].sort())
   })
 })

@@ -427,6 +427,10 @@ describe('store — events that name no permission', () => {
     )
     await db.update(allowances).set({ status: 'revoked' }).where(eq(allowances.pda, PLAN))
     const authority = (await findSubscriptionAuthority({ user: OWNER, tokenMint: USDC })).address
+    // With `T040a` the chain read of a permission under a closed authority says `revoked`.
+    for (const allowance of [sub, rec]) {
+      chain.open({ ...allowance, status: 'revoked' }, allowance.lastSlot + 10)
+    }
     const readsBefore = chain.reads.length
 
     const result = await store.write(
@@ -444,8 +448,15 @@ describe('store — events that name no permission', () => {
     for (const row of revoked) {
       expect(row).toMatchObject({ kind: 'revoked', raw: { cause: 'authority-closed', authority } })
     }
-    // The accounts are untouched on chain; there is nothing to re-read.
-    expect(chain.reads.length).toBe(readsBefore)
+    // The accounts are untouched on chain, but their authority is gone: each is
+    // read again, and the cache stops calling them active (`T040a`).
+    expect(chain.reads.slice(readsBefore).sort()).toEqual([DELEGATION, SUBSCRIPTION].sort())
+    const cached = await db.select().from(allowances).orderBy(allowances.pda)
+    expect(Object.fromEntries(cached.map((row) => [row.pda, row.status]))).toMatchObject({
+      [DELEGATION]: 'revoked',
+      [SUBSCRIPTION]: 'revoked',
+    })
+    expect(cached.find((row) => row.pda === otherMint.pda)?.status).toBe('active')
   })
 
   it('plan updated: its tracked subscriptions are re-read, no feed row is written', async () => {
