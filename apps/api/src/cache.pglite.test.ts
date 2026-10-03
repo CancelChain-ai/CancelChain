@@ -85,10 +85,10 @@ describe('readCachedAllowance', () => {
     expect(await readCachedAllowance(db, PDA)).toEqual(stored)
   })
 
-  it('keeps an amount past the double whole', async () => {
-    // The column's own ceiling (Postgres `bigint` is i64), far past 2^53.
+  it('keeps a u64 amount whole, up to u64::MAX', async () => {
+    // The customary "no limit" ceiling: past i64, which the columns were before `T041c`.
     const stored = subscription({
-      capAmount: '9223372036854775807',
+      capAmount: '18446744073709551615',
       spentInPeriod: '9007199254740993',
     })
     await store(stored)

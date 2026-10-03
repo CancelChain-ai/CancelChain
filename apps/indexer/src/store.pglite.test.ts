@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { AllowanceReadOne, ReadAllowance } from '@cancelchain/chain'
 import { findSubscriptionAuthority } from '@cancelchain/chain'
-import { allowances, events, indexerCursor, indexerHeartbeat } from '@cancelchain/db'
+import { allowances, events, indexerCursor, indexerHeartbeat, U64_MAX } from '@cancelchain/db'
 import { PGlite } from '@electric-sql/pglite'
 import type { Address } from '@solana/kit'
 import { eq } from 'drizzle-orm'
@@ -689,5 +689,62 @@ describe('store — heartbeat (T041)', () => {
     expect(new Date(rows[0]?.aliveAt ?? '').toISOString()).toBe('2026-10-03T12:00:15.000Z')
     // The cursor is not the pulse: no transaction, no cursor.
     expect(await store.cursor()).toBeNull()
+  })
+})
+
+/**
+ * u64 amounts (`T041c`). A permission may carry u64::MAX — the customary "no
+ * limit" — and Postgres `bigint` stops at 2^63 − 1. One such row used to throw
+ * in `store.write`, and a throwing handler is retried through catch-up: the
+ * indexer would stand on that transaction for everyone.
+ */
+describe('store — u64 amounts (T041c)', () => {
+  const common = { signature: 'a', slot: 1n, blockTime: 1n, instructionIndex: 0, position: 0 }
+
+  it('caches a permission whose ceiling is u64::MAX', async () => {
+    const { chain, store } = setup()
+    chain.open(
+      subscription({ capAmount: U64_MAX.toString(), spentInPeriod: (U64_MAX - 1n).toString() }),
+    )
+
+    await store.write(await decodeTransaction(fixture('subscribe')))
+
+    const [row] = await db.select().from(allowances).where(eq(allowances.pda, SUBSCRIPTION))
+    expect(row?.capAmount).toBe(U64_MAX)
+    expect(row?.spentInPeriod).toBe(U64_MAX - 1n)
+  })
+
+  it('stores a charge and a refused attempt of u64::MAX whole', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription({ capAmount: U64_MAX.toString() }))
+    await store.write(
+      synthetic({
+        events: [
+          {
+            ...common,
+            kind: 'charged',
+            allowance: SUBSCRIPTION,
+            allowanceKind: 'subscription',
+            amount: U64_MAX,
+            receiver: MERCHANT,
+          },
+        ],
+      }),
+    )
+    expect((await rowsOf()).map((row) => row.amount)).toEqual([U64_MAX])
+  })
+
+  it('the database refuses an amount outside u64 — numeric alone would take it', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription())
+    await store.write(await decodeTransaction(fixture('subscribe')))
+
+    await expect(client.exec(`UPDATE allowances SET cap_amount = ${U64_MAX + 1n}`)).rejects.toThrow(
+      /allowances_cap_amount_u64/,
+    )
+    await expect(client.exec('UPDATE allowances SET spent_in_period = -1')).rejects.toThrow(
+      /allowances_spent_in_period_u64/,
+    )
+    await expect(client.exec('UPDATE events SET amount = -1')).rejects.toThrow(/events_amount_u64/)
   })
 })

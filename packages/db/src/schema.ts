@@ -13,6 +13,7 @@ import {
   bigint,
   bigserial,
   check,
+  customType,
   index,
   integer,
   jsonb,
@@ -37,7 +38,28 @@ function inList(values: readonly string[]) {
   return sql.raw(values.map((value) => `'${value}'`).join(', '))
 }
 
-const money = (name: string) => bigint(name, { mode: 'bigint' })
+/**
+ * A u64 of the chain (`T041c`): amounts, ceilings, plan ids. Postgres `bigint`
+ * is signed and stops at 2^63 − 1, while a permission may carry u64::MAX — the
+ * customary "no limit" — and one row that does not fit would stop the indexer on
+ * that transaction for everyone. So `numeric(20, 0)` with a range `CHECK`, and
+ * `bigint` in code as before. The driver hands `numeric` over as a string, so
+ * nothing passes through a double.
+ */
+export const U64_MAX = 18_446_744_073_709_551_615n
+
+const u64 = customType<{ data: bigint; driverData: string }>({
+  dataType: () => 'numeric(20, 0)',
+  toDriver: (value) => value.toString(10),
+  fromDriver: (value) => BigInt(value),
+})
+
+const money = (name: string) => u64(name)
+
+/** Every u64 column stays inside u64: numeric alone would take −1 or 10^19 · 2. */
+function inU64(column: unknown) {
+  return sql`${column} between 0 and ${sql.raw(U64_MAX.toString(10))}`
+}
 /** Слоти на дев'ять порядків менші за `MAX_SAFE_INTEGER` — число безпечне. */
 const slot = (name: string) => bigint(name, { mode: 'number' })
 const moment = (name: string) => timestamp(name, { withTimezone: true, mode: 'string' })
@@ -48,21 +70,28 @@ export const merchants = pgTable('merchants', {
   createdAt: moment('created_at').notNull().defaultNow(),
 })
 
-export const plans = pgTable('plans', {
-  pda: text('pda').primaryKey(),
-  merchant: text('merchant').notNull(),
-  planId: money('plan_id').notNull(),
-  /** Офчейн-метадані — назва наша, у мережі її немає. */
-  name: text('name').notNull(),
-  amount: money('amount').notNull(),
-  /**
-   * Завжди секунди. `PlanTerms.periodHours` рахує годинами, і конвертація
-   * робиться явно через `periodSecondsFromHours` — див. `packages/shared/period.ts`.
-   */
-  periodSeconds: integer('period_seconds').notNull(),
-  mint: text('mint').notNull(),
-  createdAt: moment('created_at').notNull().defaultNow(),
-})
+export const plans = pgTable(
+  'plans',
+  {
+    pda: text('pda').primaryKey(),
+    merchant: text('merchant').notNull(),
+    planId: money('plan_id').notNull(),
+    /** Офчейн-метадані — назва наша, у мережі її немає. */
+    name: text('name').notNull(),
+    amount: money('amount').notNull(),
+    /**
+     * Завжди секунди. `PlanTerms.periodHours` рахує годинами, і конвертація
+     * робиться явно через `periodSecondsFromHours` — див. `packages/shared/period.ts`.
+     */
+    periodSeconds: integer('period_seconds').notNull(),
+    mint: text('mint').notNull(),
+    createdAt: moment('created_at').notNull().defaultNow(),
+  },
+  (table) => [
+    check('plans_plan_id_u64', inU64(table.planId)),
+    check('plans_amount_u64', inU64(table.amount)),
+  ],
+)
 
 export const allowances = pgTable(
   'allowances',
@@ -100,6 +129,8 @@ export const allowances = pgTable(
     index('allowances_owner_status_idx').on(table.owner, table.status),
     index('allowances_delegate_status_idx').on(table.delegate, table.status),
     check('allowances_kind_check', sql`${table.kind} in (${inList(ALLOWANCE_KINDS)})`),
+    check('allowances_cap_amount_u64', inU64(table.capAmount)),
+    check('allowances_spent_in_period_u64', inU64(table.spentInPeriod)),
     check('allowances_status_check', sql`${table.status} in (${inList(ALLOWANCE_STATUSES)})`),
     // Пауза й «не поновлювати» існують тільки для підписки за планом.
     check(
@@ -168,6 +199,8 @@ export const events = pgTable(
     ),
     index('events_allowance_block_time_idx').on(table.allowancePda, table.blockTime.desc()),
     check('events_kind_check', sql`${table.kind} in (${inList(EVENT_KINDS)})`),
+    // Null passes: `between` on null is unknown, and a CHECK fails only on false.
+    check('events_amount_u64', inU64(table.amount)),
     check(
       'events_reason_check',
       sql`${table.reason} is null or ${table.reason} in (${inList(REJECT_REASONS)})`,

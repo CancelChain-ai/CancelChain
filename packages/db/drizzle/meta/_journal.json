@@ -29,6 +29,13 @@
       "when": 1791028434258,
       "tag": "0003_indexer_heartbeat",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1791050050542,
+      "tag": "0004_u64_amounts",
+      "breakpoints": true
     }
   ]
 }

@@ -97,6 +97,24 @@ describe('migration', () => {
 })
 
 describe('schema types', () => {
+  it('stores u64 amounts as numeric(20, 0), kept inside u64 by a CHECK (T041c)', () => {
+    // Postgres `bigint` stops at 2^63 − 1; a ceiling of u64::MAX must fit.
+    for (const [table, column] of [
+      ['allowances', 'cap_amount'],
+      ['allowances', 'spent_in_period'],
+      ['events', 'amount'],
+      ['plans', 'plan_id'],
+      ['plans', 'amount'],
+    ]) {
+      expect(migrations).toContain(
+        `ALTER TABLE "${table}" ALTER COLUMN "${column}" SET DATA TYPE numeric(20, 0)`,
+      )
+      expect(migrations).toContain(
+        `CHECK ("${table}"."${column}" between 0 and 18446744073709551615)`,
+      )
+    }
+  })
+
   it('keeps money in bigint and slots in number', () => {
     const allowance: typeof allowances.$inferSelect = {
       pda: 'p',
