@@ -15,6 +15,13 @@
       "when": 1790878491222,
       "tag": "0001_indexer_writes",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791025746830,
+      "tag": "0002_reason_merchant_account_missing",
+      "breakpoints": true
     }
   ]
 }

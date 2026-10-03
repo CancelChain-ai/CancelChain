@@ -34,7 +34,8 @@ import {
  *   that was refused and the error it got.
  *
  * Nothing here talks to the network or the database. Mapping an error code to a
- * reason category is `T040`; turning these into stored rows is `T039`.
+ * reason category is `classifyRejection` (`T040`); turning these into stored
+ * rows is `T039`.
  */
 
 /** Numbers as the node sends them: plain JSON gives `number`, `@solana/kit` lifts u64 to `bigint`. */
@@ -74,6 +75,8 @@ export type TransactionRecord = {
       | readonly { index: Integer; instructions: readonly CompiledInstruction[] }[]
       | null
     loadedAddresses?: { writable: readonly string[]; readonly: readonly string[] } | null
+    /** Token accounts that existed before the transaction; recorded for failed ones too. */
+    preTokenBalances?: readonly { accountIndex: Integer }[] | null
   } | null
 }
 
@@ -131,6 +134,13 @@ export type IndexedEvent = Common &
          * field alone would read it as this program's code 1.
          */
         raisedBy: Address | null
+        /**
+         * Whether the charge's token accounts existed before the transaction;
+         * `null` when the node sent no token balances. The program refuses a
+         * missing account of either side with the same code (`110`), and only
+         * this tells the merchant's missing account from the subscriber's.
+         */
+        tokenAccountsExisted: { source: boolean; destination: boolean } | null
       }
     /**
      * `cancelSubscription`: the subscription stays chargeable until
@@ -312,27 +322,39 @@ function parse(
 }
 
 /** A charge attempt: which permission, which kind, how much. `null` for anything else. */
-function chargeAttempt(
-  parsed: Parsed,
-): { allowance: Address; allowanceKind: AllowanceKind; attempted: bigint } | null {
+type ChargeAttempt = {
+  allowance: Address
+  allowanceKind: AllowanceKind
+  attempted: bigint
+  source: Address
+  destination: Address
+}
+
+function chargeAttempt(parsed: Parsed): ChargeAttempt | null {
   switch (parsed.instructionType) {
     case SubscriptionsInstruction.TransferSubscription:
       return {
         allowance: parsed.accounts.subscriptionPda.address,
         allowanceKind: 'subscription',
         attempted: parsed.data.transferData.amount,
+        source: parsed.accounts.delegatorAta.address,
+        destination: parsed.accounts.receiverAta.address,
       }
     case SubscriptionsInstruction.TransferRecurring:
       return {
         allowance: parsed.accounts.delegationPda.address,
         allowanceKind: 'recurring',
         attempted: parsed.data.transferData.amount,
+        source: parsed.accounts.delegatorAta.address,
+        destination: parsed.accounts.receiverAta.address,
       }
     case SubscriptionsInstruction.TransferFixed:
       return {
         allowance: parsed.accounts.delegationPda.address,
         allowanceKind: 'fixed',
         attempted: parsed.data.transferData.amount,
+        source: parsed.accounts.delegatorAta.address,
+        destination: parsed.accounts.receiverAta.address,
       }
     default:
       return null
@@ -447,6 +469,19 @@ function failedLine(program: string): string {
 
 const FAILED_LINE = /^Program (\S+) failed: /
 
+/** Addresses of the token accounts that existed before the transaction; `null` when not reported. */
+function existingTokenAccounts(tx: TransactionRecord): Set<string> | null {
+  const balances = tx.meta?.preTokenBalances
+  if (balances === undefined || balances === null) return null
+  const table = accountTable(tx)
+  return new Set(
+    balances.flatMap((balance) => {
+      const meta = table[Number(balance.accountIndex)]
+      return meta === undefined ? [] : [meta.address as string]
+    }),
+  )
+}
+
 /** The innermost program that failed: the runtime logs the failure from the inside out. */
 export function failingProgram(logs: readonly string[]): Address | null {
   for (const line of logs) {
@@ -489,6 +524,7 @@ export async function decodeTransaction(
     // instruction — the failure is ours only if our program logged it.
     const refusedByUs =
       direct !== undefined || logs.some((line) => line.startsWith(failedLine(program)))
+    const existing = existingTokenAccounts(tx)
     for (const ix of inFailedInstruction) {
       const parsed = parse(ix)
       if (!parsed.ok) continue
@@ -502,14 +538,19 @@ export async function decodeTransaction(
         })
         break
       }
+      const { source, destination, ...charge } = attempt
       events.push({
         ...common,
         instructionIndex: error.instructionIndex,
         position: ix.position,
         kind: 'rejected',
-        ...attempt,
+        ...charge,
         failure: error.failure,
         raisedBy: failingProgram(logs),
+        tokenAccountsExisted:
+          existing === null
+            ? null
+            : { source: existing.has(source), destination: existing.has(destination) },
       })
     }
     return { ...common, failed, events, problems, logs }

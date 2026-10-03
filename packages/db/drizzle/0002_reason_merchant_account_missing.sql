@@ -1,0 +1,2 @@
+ALTER TABLE "events" DROP CONSTRAINT "events_reason_check";--> statement-breakpoint
+ALTER TABLE "events" ADD CONSTRAINT "events_reason_check" CHECK ("events"."reason" is null or "events"."reason" in ('revoked', 'cap_exceeded', 'paused', 'expired', 'insufficient_funds', 'wrong_mint', 'not_due_yet', 'merchant_account_missing'));

@@ -7,9 +7,16 @@ import {
   type NewAllowance,
   type NewEvent,
 } from '@cancelchain/db'
-import { type Allowance, toU64 } from '@cancelchain/shared'
+import {
+  type Allowance,
+  type Classification,
+  classifyRejection,
+  type RejectReason,
+  rejectionFactsSchema,
+  toU64,
+} from '@cancelchain/shared'
 import { type Address, address as toAddress } from '@solana/kit'
-import { and, eq, inArray, ne, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import type { DecodedTransaction, IndexedEvent } from './decode.js'
 import { jsonSafe, type SignatureInfo } from './subscribe.js'
@@ -44,6 +51,7 @@ export type StoreOptions = {
 type StoreLog = {
   info(object: object, message: string): void
   warn(object: object, message: string): void
+  error(object: object, message: string): void
 }
 
 export type WriteResult = {
@@ -59,9 +67,22 @@ export type WriteResult = {
   untracked: string[]
 }
 
+export type BackfillResult = {
+  /** Refusals that got a category now. */
+  filled: number
+  /** Refusals still without one: a code we do not map, logged as a mapping error. */
+  unmapped: number
+}
+
 export type Store = {
   write(decoded: DecodedTransaction): Promise<WriteResult>
   cursor(): Promise<SignatureInfo | null>
+  /**
+   * Categorises stored refusals that have none (`T040`). Idempotent: it only
+   * touches `reason is null`, so once a code joins the mapping, the rows it
+   * left uncategorised fill themselves on the next start.
+   */
+  backfillReasons(): Promise<BackfillResult>
 }
 
 type ChainState =
@@ -148,9 +169,16 @@ export function createStore(options: StoreOptions): Store {
         if (state.state === 'closed') await markClosed(tx, pda, state.slot, now())
       }
 
+      const paused = await pausedAmong(
+        tx,
+        direct.flatMap((event) => (event.kind === 'rejected' ? [event.allowance] : [])),
+      )
       const pending: PendingEvent[] = direct.map((event) => ({
         ...base,
         ...rowFor(event),
+        ...(event.kind === 'rejected'
+          ? { reason: reasonFor(event, paused.has(event.allowance), decoded.signature) }
+          : {}),
         raw: { ...logs, ...detailOf(event) },
       }))
       for (const event of authorityEvents) {
@@ -242,7 +270,74 @@ export function createStore(options: StoreOptions): Store {
     return row === undefined ? null : { signature: row.signature, slot: BigInt(row.slot) }
   }
 
-  return { write, cursor }
+  /** A refusal's category, or `null` with a mapping error in the log — never a guess. */
+  function reasonFor(
+    event: Extract<IndexedEvent, { kind: 'rejected' }>,
+    paused: boolean,
+    signature: string,
+  ): RejectReason | null {
+    const classified = classifyRejection(
+      {
+        failure: event.failure,
+        raisedBy: event.raisedBy,
+        tokenAccountsExisted: event.tokenAccountsExisted,
+      },
+      { paused },
+    )
+    reportUnmapped(classified, { signature, allowance: event.allowance })
+    return classified.reason
+  }
+
+  function reportUnmapped(classified: Classification, where: object): void {
+    if (classified.reason !== null) return
+    log.error({ ...where, unmapped: classified.unmapped }, 'reject reason mapping failed')
+  }
+
+  async function backfillReasons(): Promise<BackfillResult> {
+    const rows = await db
+      .select({
+        id: events.id,
+        signature: events.signature,
+        allowance: events.allowancePda,
+        raw: events.raw,
+        pausedAt: allowances.pausedAt,
+      })
+      .from(events)
+      .innerJoin(allowances, eq(events.allowancePda, allowances.pda))
+      .where(and(eq(events.kind, 'rejected'), isNull(events.reason)))
+    let filled = 0
+    for (const row of rows) {
+      const where = { signature: row.signature, allowance: row.allowance }
+      const facts = rejectionFactsSchema.safeParse(row.raw)
+      if (!facts.success) {
+        log.error({ ...where, issues: facts.error.issues }, 'reject reason mapping failed')
+        continue
+      }
+      const classified = classifyRejection(facts.data, { paused: row.pausedAt !== null })
+      reportUnmapped(classified, where)
+      if (classified.reason === null) continue
+      await db
+        .update(events)
+        .set({ reason: classified.reason })
+        .where(and(eq(events.id, row.id), isNull(events.reason)))
+      filled += 1
+    }
+    const result = { filled, unmapped: rows.length - filled }
+    if (rows.length > 0) log.info(result, 'reject reasons backfilled')
+    return result
+  }
+
+  return { write, cursor, backfillReasons }
+}
+
+/** Permissions among `pdas` that carry our pause label: `508` means paused, not cancelled, there. */
+async function pausedAmong(tx: Tx, pdas: readonly string[]): Promise<Set<string>> {
+  if (pdas.length === 0) return new Set()
+  const rows = await tx
+    .select({ pda: allowances.pda })
+    .from(allowances)
+    .where(and(inArray(allowances.pda, [...new Set(pdas)]), isNotNull(allowances.pausedAt)))
+  return new Set(rows.map((row) => row.pda))
 }
 
 type Tx = Parameters<Parameters<StoreDb['transaction']>[0]>[0]
@@ -342,7 +437,7 @@ function rowFor(
     case 'charged':
       return { ...common, kind: 'charged', amount: event.amount }
     case 'rejected':
-      // `reason` stays null until `T040` maps `(raisedBy, code)`; both are in `raw`.
+      // `reason` is filled by the caller: it depends on the cache's pause label.
       return { ...common, kind: 'rejected', amount: event.attempted }
     case 'cancelled':
       return {
@@ -358,7 +453,10 @@ function rowFor(
   }
 }
 
-/** What the row's columns do not hold but a later task needs (`T040` reads the failure). */
+/**
+ * What the row's columns do not hold. A refusal keeps the facts its category
+ * came from, so the backfill can classify it again once the mapping grows.
+ */
 function detailOf(event: DirectEvent): Record<string, unknown> {
   switch (event.kind) {
     case 'created':
@@ -366,10 +464,11 @@ function detailOf(event: DirectEvent): Record<string, unknown> {
     case 'charged':
       return { receiver: event.receiver }
     case 'rejected':
-      return jsonSafe({ failure: event.failure, raisedBy: event.raisedBy }) as Record<
-        string,
-        unknown
-      >
+      return jsonSafe({
+        failure: event.failure,
+        raisedBy: event.raisedBy,
+        tokenAccountsExisted: event.tokenAccountsExisted,
+      }) as Record<string, unknown>
     default:
       return {}
   }

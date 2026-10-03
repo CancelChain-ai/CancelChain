@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
-import { encodeProgramEvent, findSubscription } from '@cancelchain/chain'
+import { encodeProgramEvent, findSubscription, PROGRAM_ADDRESS } from '@cancelchain/chain'
+import { classifyRejection, SUBSCRIPTIONS_PROGRAM } from '@cancelchain/shared'
 import { type Address, getBase58Decoder, getBase58Encoder } from '@solana/kit'
 import {
   getCreateRecurringDelegationInstructionDataEncoder,
@@ -436,5 +437,55 @@ describe('decodeTransaction — nothing vanishes silently', () => {
       instructionIndex: 2,
       failure: { type: 'unrecognised', error: { BorshIoError: 'x' } },
     })
+  })
+})
+
+describe('refusal categories — real devnet refusals (T040)', () => {
+  async function refusalOf(name: string, tx: TransactionRecord = fixture(name)) {
+    const [event] = (await decodeTransaction(tx)).events
+    if (event?.kind !== 'rejected') throw new Error(`${name}: no refusal`)
+    return event
+  }
+
+  it('the shared mapping names the program the SDK names', () => {
+    expect(SUBSCRIPTIONS_PROGRAM).toBe(PROGRAM_ADDRESS)
+  })
+
+  it('records which token account was missing: the merchant’s, not the subscriber’s', async () => {
+    // Our doomed attempt of 2026-09-30: merchant `FGHMNo…` had no devnet-USDC account.
+    const event = await refusalOf('reject-merchant-no-token-account')
+    expect(event).toMatchObject({
+      allowance: SUBSCRIPTION,
+      failure: { type: 'custom', code: 110 },
+      raisedBy: PROGRAM,
+      tokenAccountsExisted: { source: true, destination: false },
+    })
+  })
+
+  it('the same `110` with the subscriber’s account missing stays unknown, not the merchant’s fault', async () => {
+    // Someone else's charge on devnet, 2026-09-30: the receiver's account existed.
+    const event = await refusalOf('reject-subscriber-no-token-account')
+    expect(event).toMatchObject({
+      failure: { type: 'custom', code: 110 },
+      raisedBy: PROGRAM,
+      tokenAccountsExisted: { source: false, destination: true },
+    })
+    expect(classifyRejection(event, { paused: false }).reason).toBeNull()
+  })
+
+  it('says nothing about token accounts when the node sent no balances', async () => {
+    const tx = fixture('reject-merchant-no-token-account')
+    const bare = { ...tx, meta: tx.meta === null ? null : { ...tx.meta, preTokenBalances: null } }
+    expect((await refusalOf('bare', bare)).tokenAccountsExisted).toBeNull()
+  })
+
+  it.each([
+    ['reject-over-cap', 'cap_exceeded'],
+    ['reject-after-close', 'revoked'],
+    ['reject-token-insufficient-funds', 'insufficient_funds'],
+    ['reject-merchant-no-token-account', 'merchant_account_missing'],
+  ] as const)('%s → %s', async (name, reason) => {
+    const event = await refusalOf(name)
+    expect(classifyRejection(event, { paused: false })).toEqual({ reason })
   })
 })

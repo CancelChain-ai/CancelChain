@@ -86,6 +86,9 @@ async function main(): Promise<void> {
     })
   }
 
+  // Refusals stored before their code was mapped get their category now.
+  await store.backfillReasons()
+
   // Without a cursor the indexer starts at the program's newest transaction;
   // with one, it catches up from where the last run stopped.
   const resumeFrom = (await store.cursor()) ?? undefined

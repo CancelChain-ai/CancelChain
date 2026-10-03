@@ -131,13 +131,18 @@ function fakeChain() {
 function setup() {
   const chain = fakeChain()
   const warnings: { object: object; message: string }[] = []
+  const errors: { object: object; message: string }[] = []
   const store = createStore({
     db,
     readAllowance: chain.read,
-    log: { info: () => {}, warn: (object, message) => warnings.push({ object, message }) },
+    log: {
+      info: () => {},
+      warn: (object, message) => warnings.push({ object, message }),
+      error: (object, message) => errors.push({ object, message }),
+    },
     now: () => new Date('2026-10-01T12:00:00.000Z'),
   })
-  return { chain, store, warnings }
+  return { chain, store, warnings, errors }
 }
 
 function synthetic(
@@ -251,8 +256,8 @@ describe('store — writing what the decoder found', () => {
     ).rejects.toThrow()
   })
 
-  it('a refusal: attempted amount, no category yet, failure and the program that raised it in raw', async () => {
-    const { chain, store } = setup()
+  it('a refusal: attempted amount, its category, and the facts behind it in raw', async () => {
+    const { chain, store, errors } = setup()
     chain.open(recurring())
     const decoded = await decodeTransaction(fixture('reject-over-cap'))
 
@@ -262,14 +267,16 @@ describe('store — writing what the decoder found', () => {
       {
         allowancePda: DELEGATION,
         kind: 'rejected',
-        reason: null,
+        reason: 'cap_exceeded',
         raw: {
           failure: { type: 'custom', code: 400 },
           raisedBy: 'De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44',
+          tokenAccountsExisted: { source: true, destination: true },
           logCount: 3,
         },
       },
     ])
+    expect(errors).toEqual([])
     // The seeded cap minus the control charge, plus one: what decode.test.ts pins.
     expect((await rowsOf())[0]?.amount).toBe(24_000_001n)
   })
@@ -302,6 +309,7 @@ describe('store — writing what the decoder found', () => {
             attempted: 1n,
             failure: { type: 'custom', code: 400 },
             raisedBy: null,
+            tokenAccountsExisted: null,
           },
         ],
       }),
@@ -502,5 +510,147 @@ describe('store — cursor', () => {
     expect(new Date(row?.blockTime ?? '').toISOString()).toBe('2026-10-01T12:00:00.000Z')
     expect(row?.raw).toMatchObject({ blockTimeEstimated: true })
     expect(warnings).toHaveLength(1)
+  })
+})
+
+describe('store — refusal categories (T040)', () => {
+  const PROGRAM = 'De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44' as Address
+
+  function refusal(
+    signature: string,
+    failure: { type: 'custom'; code: number },
+    tokenAccountsExisted: { source: boolean; destination: boolean } | null = null,
+  ): DecodedTransaction {
+    return synthetic({
+      signature,
+      failed: true,
+      events: [
+        {
+          signature,
+          slot: 600_000_000n,
+          blockTime: 1_790_700_000n,
+          instructionIndex: 0,
+          position: 0,
+          kind: 'rejected',
+          allowance: SUBSCRIPTION,
+          allowanceKind: 'subscription',
+          attempted: 1n,
+          failure,
+          raisedBy: PROGRAM,
+          tokenAccountsExisted,
+        },
+      ],
+    })
+  }
+
+  const reasons = async () => (await rowsOf()).map((row) => [row.signature, row.reason])
+
+  it('a merchant with no account to receive into: named, not left unknown', async () => {
+    // Our own doomed attempt on devnet, 2026-09-30: the subscriber's account
+    // existed, the merchant's did not, and the program answered `110`.
+    const { chain, store, errors } = setup()
+    chain.open(subscription())
+
+    await store.write(await decodeTransaction(fixture('reject-merchant-no-token-account')))
+
+    expect(await rowsOf()).toMatchObject([
+      { kind: 'rejected', reason: 'merchant_account_missing', amount: 10_000_000n },
+    ])
+    expect(errors).toEqual([])
+  })
+
+  it('a code nobody mapped: reason null and a mapping error in the log, no catch-all', async () => {
+    const { chain, store, errors } = setup()
+    chain.open(subscription())
+
+    await store.write(refusal('unknown', { type: 'custom', code: 999 }))
+
+    expect(await reasons()).toEqual([['unknown', null]])
+    expect(errors).toMatchObject([
+      {
+        message: 'reject reason mapping failed',
+        object: {
+          signature: 'unknown',
+          allowance: SUBSCRIPTION,
+          unmapped: `custom 999 from ${PROGRAM}`,
+        },
+      },
+    ])
+  })
+
+  it('`508` reads as a pause where our label is, and as a cancellation elsewhere', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription())
+    await store.write(refusal('cancelled', { type: 'custom', code: 508 }))
+    await db
+      .update(allowances)
+      .set({ pausedAt: '2026-10-01T10:00:00.000Z', status: 'paused' })
+      .where(eq(allowances.pda, SUBSCRIPTION))
+
+    await store.write(refusal('paused', { type: 'custom', code: 508 }))
+
+    expect(await reasons()).toEqual([
+      ['cancelled', 'revoked'],
+      ['paused', 'paused'],
+    ])
+  })
+
+  it('backfill: rows stored without a category get one; what is still unknown stays null', async () => {
+    const { chain, store, errors } = setup()
+    chain.open(subscription())
+    await store.write(refusal('over-cap', { type: 'custom', code: 400 }))
+    await store.write(
+      refusal(
+        'no-merchant-account',
+        { type: 'custom', code: 110 },
+        { source: true, destination: false },
+      ),
+    )
+    await store.write(refusal('unknown', { type: 'custom', code: 999 }))
+    // Rows as T039 wrote them: no category, and no token-account record on the `110`.
+    await client.exec(`UPDATE events SET reason = NULL`)
+    await store.write(refusal('pre-t040-110', { type: 'custom', code: 110 }))
+    await client.exec(
+      `UPDATE events SET raw = raw - 'tokenAccountsExisted' WHERE signature = 'pre-t040-110'`,
+    )
+    errors.length = 0
+
+    expect(await store.backfillReasons()).toEqual({ filled: 2, unmapped: 2 })
+    expect(await reasons()).toEqual([
+      ['over-cap', 'cap_exceeded'],
+      ['no-merchant-account', 'merchant_account_missing'],
+      ['unknown', null],
+      ['pre-t040-110', null],
+    ])
+    expect(errors.map((entry) => (entry.object as { signature: string }).signature)).toEqual([
+      'unknown',
+      'pre-t040-110',
+    ])
+
+    // Idempotent: a second start touches nothing it already filled.
+    expect(await store.backfillReasons()).toEqual({ filled: 0, unmapped: 2 })
+  })
+
+  it('backfill: a row whose raw does not hold the facts is reported, not guessed', async () => {
+    const { chain, store, errors } = setup()
+    chain.open(subscription())
+    await store.write(refusal('over-cap', { type: 'custom', code: 400 }))
+    await client.exec(`UPDATE events SET reason = NULL, raw = '{"logs": []}'::jsonb`)
+
+    expect(await store.backfillReasons()).toEqual({ filled: 0, unmapped: 1 })
+    expect(errors).toMatchObject([{ message: 'reject reason mapping failed' }])
+  })
+
+  it('backfill leaves charges and categorised refusals alone', async () => {
+    const { chain, store } = setup()
+    chain.open(recurring())
+    await store.write(await decodeTransaction(fixture('charge-recurring')))
+    await store.write(await decodeTransaction(fixture('reject-over-cap')))
+
+    expect(await store.backfillReasons()).toEqual({ filled: 0, unmapped: 0 })
+    expect((await rowsOf()).map((row) => [row.kind, row.reason])).toEqual([
+      ['charged', null],
+      ['rejected', 'cap_exceeded'],
+    ])
   })
 })
