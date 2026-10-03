@@ -462,15 +462,50 @@ describe('refusal categories — real devnet refusals (T040)', () => {
     })
   })
 
-  it('the same `110` with the subscriber’s account missing stays unknown, not the merchant’s fault', async () => {
-    // Someone else's charge on devnet, 2026-09-30: the receiver's account existed.
+  it('the same `110` with the subscriber’s account missing is not the merchant’s fault', async () => {
+    // Someone else's charge on devnet, 2026-09-30: the subscriber had emptied
+    // and closed their token account; the receiver's account existed.
     const event = await refusalOf('reject-subscriber-no-token-account')
     expect(event).toMatchObject({
       failure: { type: 'custom', code: 110 },
       raisedBy: PROGRAM,
       tokenAccountsExisted: { source: false, destination: true },
+      // The source account is gone, so nothing names the subscriber.
+      authority: { existed: true, isSubscribers: null },
     })
-    expect(classifyRejection(event, { paused: false }).reason).toBeNull()
+  })
+
+  it('`103`: the charge named the subscriber’s own authority, and it was gone', async () => {
+    // devnet, 2026-09-30: subscriber `6AU3rE…` had closed their authority the day before.
+    const event = await refusalOf('reject-authority-closed')
+    expect(event).toMatchObject({
+      failure: { type: 'custom', code: 103 },
+      raisedBy: PROGRAM,
+      authority: { existed: false, isSubscribers: true },
+    })
+  })
+
+  it('an authority that the source owner does not derive to is not the subscriber’s', async () => {
+    const tx = fixture('reject-authority-closed')
+    const balances = (tx.meta?.preTokenBalances ?? []).map((balance) => ({
+      ...balance,
+      owner: 'CuXtQLBvSmH5RJs5N7tNtDEUa5gR1mK9PUgfruHCvnSR',
+    }))
+    const forged = {
+      ...tx,
+      meta: tx.meta === null ? null : { ...tx.meta, preTokenBalances: balances },
+    }
+    expect((await refusalOf('forged', forged)).authority).toEqual({
+      existed: false,
+      isSubscribers: false,
+    })
+  })
+
+  it('a charge that went through its authority records it as existing and the subscriber’s', async () => {
+    expect((await refusalOf('reject-over-cap')).authority).toEqual({
+      existed: true,
+      isSubscribers: true,
+    })
   })
 
   it('says nothing about token accounts when the node sent no balances', async () => {
@@ -484,6 +519,8 @@ describe('refusal categories — real devnet refusals (T040)', () => {
     ['reject-after-close', 'revoked'],
     ['reject-token-insufficient-funds', 'insufficient_funds'],
     ['reject-merchant-no-token-account', 'merchant_account_missing'],
+    ['reject-subscriber-no-token-account', 'insufficient_funds'],
+    ['reject-authority-closed', 'revoked'],
   ] as const)('%s → %s', async (name, reason) => {
     const event = await refusalOf(name)
     expect(classifyRejection(event, { paused: false })).toEqual({ reason })

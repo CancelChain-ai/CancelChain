@@ -1,5 +1,6 @@
 import {
   findSubscription,
+  findSubscriptionAuthority,
   PROGRAM_ADDRESS,
   type ProgramEvent,
   readProgramEvent,
@@ -76,7 +77,9 @@ export type TransactionRecord = {
       | null
     loadedAddresses?: { writable: readonly string[]; readonly: readonly string[] } | null
     /** Token accounts that existed before the transaction; recorded for failed ones too. */
-    preTokenBalances?: readonly { accountIndex: Integer }[] | null
+    preTokenBalances?: readonly { accountIndex: Integer; owner?: string }[] | null
+    /** Lamports of every account before the transaction: `0` means it did not exist. */
+    preBalances?: readonly Integer[] | null
   } | null
 }
 
@@ -141,6 +144,16 @@ export type IndexedEvent = Common &
          * this tells the merchant's missing account from the subscriber's.
          */
         tokenAccountsExisted: { source: boolean; destination: boolean } | null
+        /**
+         * The subscription authority the charge named. `existed`: it held
+         * lamports before the transaction (`null` when the node sent no
+         * balances). `isSubscribers`: it is the address derived from the
+         * source account's owner and the mint, i.e. the subscriber's own
+         * authority (`null` when the source account's owner is unknown). Only
+         * both together tell "the subscriber closed it" from "the caller
+         * passed a wrong address" behind code `103`.
+         */
+        authority: { existed: boolean | null; isSubscribers: boolean | null }
       }
     /**
      * `cancelSubscription`: the subscription stays chargeable until
@@ -328,6 +341,8 @@ type ChargeAttempt = {
   attempted: bigint
   source: Address
   destination: Address
+  authority: Address
+  mint: Address
 }
 
 function chargeAttempt(parsed: Parsed): ChargeAttempt | null {
@@ -339,6 +354,8 @@ function chargeAttempt(parsed: Parsed): ChargeAttempt | null {
         attempted: parsed.data.transferData.amount,
         source: parsed.accounts.delegatorAta.address,
         destination: parsed.accounts.receiverAta.address,
+        authority: parsed.accounts.subscriptionAuthority.address,
+        mint: parsed.accounts.tokenMint.address,
       }
     case SubscriptionsInstruction.TransferRecurring:
       return {
@@ -347,6 +364,8 @@ function chargeAttempt(parsed: Parsed): ChargeAttempt | null {
         attempted: parsed.data.transferData.amount,
         source: parsed.accounts.delegatorAta.address,
         destination: parsed.accounts.receiverAta.address,
+        authority: parsed.accounts.subscriptionAuthority.address,
+        mint: parsed.accounts.tokenMint.address,
       }
     case SubscriptionsInstruction.TransferFixed:
       return {
@@ -355,6 +374,8 @@ function chargeAttempt(parsed: Parsed): ChargeAttempt | null {
         attempted: parsed.data.transferData.amount,
         source: parsed.accounts.delegatorAta.address,
         destination: parsed.accounts.receiverAta.address,
+        authority: parsed.accounts.subscriptionAuthority.address,
+        mint: parsed.accounts.tokenMint.address,
       }
     default:
       return null
@@ -469,17 +490,50 @@ function failedLine(program: string): string {
 
 const FAILED_LINE = /^Program (\S+) failed: /
 
-/** Addresses of the token accounts that existed before the transaction; `null` when not reported. */
-function existingTokenAccounts(tx: TransactionRecord): Set<string> | null {
+/**
+ * Token accounts that existed before the transaction, with their owners when
+ * the node says; `null` when it reported no token balances at all.
+ */
+function existingTokenAccounts(tx: TransactionRecord): Map<string, string | null> | null {
   const balances = tx.meta?.preTokenBalances
   if (balances === undefined || balances === null) return null
   const table = accountTable(tx)
-  return new Set(
+  return new Map(
     balances.flatMap((balance) => {
       const meta = table[Number(balance.accountIndex)]
-      return meta === undefined ? [] : [meta.address as string]
+      return meta === undefined ? [] : [[meta.address as string, balance.owner ?? null] as const]
     }),
   )
+}
+
+/** Accounts that held lamports before the transaction; `null` when not reported. */
+function fundedAccounts(tx: TransactionRecord): Set<string> | null {
+  const balances = tx.meta?.preBalances
+  if (balances === undefined || balances === null) return null
+  const table = accountTable(tx)
+  return new Set(
+    balances.flatMap((lamports, index) => {
+      const meta = table[index]
+      return meta === undefined || BigInt(lamports) === 0n ? [] : [meta.address as string]
+    }),
+  )
+}
+
+async function authorityFacts(
+  attempt: ChargeAttempt,
+  tokenAccounts: Map<string, string | null> | null,
+  funded: Set<string> | null,
+): Promise<{ existed: boolean | null; isSubscribers: boolean | null }> {
+  const subscriber = tokenAccounts?.get(attempt.source) ?? null
+  const derived =
+    subscriber === null
+      ? null
+      : (await findSubscriptionAuthority({ user: toAddress(subscriber), tokenMint: attempt.mint }))
+          .address
+  return {
+    existed: funded === null ? null : funded.has(attempt.authority),
+    isSubscribers: derived === null ? null : derived === attempt.authority,
+  }
 }
 
 /** The innermost program that failed: the runtime logs the failure from the inside out. */
@@ -525,6 +579,7 @@ export async function decodeTransaction(
     const refusedByUs =
       direct !== undefined || logs.some((line) => line.startsWith(failedLine(program)))
     const existing = existingTokenAccounts(tx)
+    const funded = fundedAccounts(tx)
     for (const ix of inFailedInstruction) {
       const parsed = parse(ix)
       if (!parsed.ok) continue
@@ -538,7 +593,7 @@ export async function decodeTransaction(
         })
         break
       }
-      const { source, destination, ...charge } = attempt
+      const { source, destination, authority: _authority, mint: _mint, ...charge } = attempt
       events.push({
         ...common,
         instructionIndex: error.instructionIndex,
@@ -551,6 +606,7 @@ export async function decodeTransaction(
           existing === null
             ? null
             : { source: existing.has(source), destination: existing.has(destination) },
+        authority: await authorityFacts(attempt, existing, funded),
       })
     }
     return { ...common, failed, events, problems, logs }

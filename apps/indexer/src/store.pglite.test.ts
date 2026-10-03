@@ -310,6 +310,7 @@ describe('store — writing what the decoder found', () => {
             failure: { type: 'custom', code: 400 },
             raisedBy: null,
             tokenAccountsExisted: null,
+            authority: { existed: null, isSubscribers: null },
           },
         ],
       }),
@@ -549,6 +550,7 @@ describe('store — refusal categories (T040)', () => {
           failure,
           raisedBy: PROGRAM,
           tokenAccountsExisted,
+          authority: { existed: true, isSubscribers: true },
         },
       ],
     })

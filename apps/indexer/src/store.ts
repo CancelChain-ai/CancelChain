@@ -290,6 +290,7 @@ export function createStore(options: StoreOptions): Store {
         failure: event.failure,
         raisedBy: event.raisedBy,
         tokenAccountsExisted: event.tokenAccountsExisted,
+        authority: event.authority,
       },
       { paused },
     )
@@ -481,6 +482,7 @@ function detailOf(event: DirectEvent): Record<string, unknown> {
         failure: event.failure,
         raisedBy: event.raisedBy,
         tokenAccountsExisted: event.tokenAccountsExisted,
+        authority: event.authority,
       }) as Record<string, unknown>
     default:
       return {}

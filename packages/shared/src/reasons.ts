@@ -81,6 +81,14 @@ export const rejectionFactsSchema = z.object({
     .object({ source: z.boolean(), destination: z.boolean() })
     .nullable()
     .optional(),
+  /**
+   * The subscription authority the charge named: whether it existed before the
+   * transaction, and whether it is the subscriber's own (derived from the
+   * source account's owner and the mint). Rows written before `T040b` lack it.
+   */
+  authority: z
+    .object({ existed: z.boolean().nullable(), isSubscribers: z.boolean().nullable() })
+    .optional(),
 })
 
 export type RejectionFacts = z.infer<typeof rejectionFactsSchema>
@@ -120,6 +128,8 @@ const BY_PROGRAM_AND_CODE: Readonly<Record<string, Readonly<Record<number, Rejec
 const SUBSCRIPTION_CANCELLED = 508
 /** `InvalidTokenSplTokenAccountData` / `InvalidToken2022TokenAccountData`. */
 const TOKEN_ACCOUNT_DATA = new Set([110, 107])
+/** `InvalidSubscriptionAuthorityPda`. */
+const INVALID_AUTHORITY = 103
 
 export function classifyRejection(
   facts: RejectionFacts,
@@ -145,11 +155,17 @@ export function classifyRejection(
     return { reason: context.paused ? 'paused' : 'revoked' }
   }
   if (raisedBy === SUBSCRIPTIONS_PROGRAM && TOKEN_ACCOUNT_DATA.has(code)) {
-    // The same code answers a missing subscriber account too (seen on devnet,
-    // 2026-09-29), so the merchant is blamed only when the transaction shows it.
+    // The same code answers a missing account on either side (seen on devnet),
+    // so each side is named only when the transaction shows it.
     const existed = facts.tokenAccountsExisted
     if (existed?.source === true && existed.destination === false) {
       return { reason: 'merchant_account_missing' }
+    }
+    if (existed?.source === false && existed.destination === true) {
+      // The subscriber emptied and closed their token account (devnet,
+      // 2026-09-29, `383SBC…`). The permission still stands; what is missing
+      // is the money it draws from — and topping up recreates the account.
+      return { reason: 'insufficient_funds' }
     }
     return {
       reason: null,
@@ -157,6 +173,24 @@ export function classifyRejection(
         existed === undefined || existed === null
           ? 'no record of which token account was missing'
           : `token accounts existed: source ${existed.source}, destination ${existed.destination}`
+      }`,
+    }
+  }
+  if (raisedBy === SUBSCRIPTIONS_PROGRAM && code === INVALID_AUTHORITY) {
+    // "Wrong authority address" literally. It is the subscriber's revocation
+    // only when the charge named the subscriber's own authority and it was
+    // gone: "revoke everything in this mint" closes it (devnet, 2026-09-29,
+    // `6AU3rE…`). A wrong address from the caller stays unknown.
+    const { authority } = facts
+    if (authority?.isSubscribers === true && authority.existed === false) {
+      return { reason: 'revoked' }
+    }
+    return {
+      reason: null,
+      unmapped: `custom ${code} from ${raisedBy}: ${
+        authority === undefined
+          ? 'no record of the authority the charge named'
+          : `authority existed ${authority.existed}, is the subscriber's ${authority.isSubscribers}`
       }`,
     }
   }

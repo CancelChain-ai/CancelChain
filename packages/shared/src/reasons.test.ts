@@ -120,10 +120,11 @@ describe('classifyRejection — the key is (raisedBy, code)', () => {
     expect(classifyRejection(with110({ source: true, destination: false }), active)).toEqual({
       reason: 'merchant_account_missing',
     })
-    // The subscriber's account missing answers `110` too — that is not the merchant.
-    expect(
-      classifyRejection(with110({ source: false, destination: true }), active).reason,
-    ).toBeNull()
+    // The subscriber's account missing answers `110` too — not the merchant: the
+    // subscriber closed it, and for a person that is no money to draw from.
+    expect(classifyRejection(with110({ source: false, destination: true }), active)).toEqual({
+      reason: 'insufficient_funds',
+    })
     expect(
       classifyRejection(with110({ source: false, destination: false }), active).reason,
     ).toBeNull()
@@ -169,5 +170,39 @@ describe('classifyRejection — the key is (raisedBy, code)', () => {
       raisedBy: SUBSCRIPTIONS_PROGRAM,
     })
     expect(rejectionFactsSchema.safeParse({ logs: [] }).success).toBe(false)
+  })
+})
+
+describe('classifyRejection — `103`, the authority the charge named (T040b)', () => {
+  const with103 = (authority: RejectionFacts['authority']): RejectionFacts => ({
+    failure: { type: 'custom', code: 103 },
+    raisedBy: SUBSCRIPTIONS_PROGRAM,
+    authority,
+  })
+  const active = { paused: false }
+
+  it('the subscriber’s own authority, gone: they revoked everything in this mint', () => {
+    expect(classifyRejection(with103({ existed: false, isSubscribers: true }), active)).toEqual({
+      reason: 'revoked',
+    })
+  })
+
+  it('a wrong address from the caller is not the subscriber’s revocation', () => {
+    expect(
+      classifyRejection(with103({ existed: false, isSubscribers: false }), active).reason,
+    ).toBeNull()
+    expect(
+      classifyRejection(with103({ existed: true, isSubscribers: true }), active).reason,
+    ).toBeNull()
+  })
+
+  it('without the facts — a row from before T040b, or an unknown owner — it stays unknown', () => {
+    expect(classifyRejection(with103(undefined), active)).toEqual({
+      reason: null,
+      unmapped: `custom 103 from ${SUBSCRIPTIONS_PROGRAM}: no record of the authority the charge named`,
+    })
+    expect(
+      classifyRejection(with103({ existed: false, isSubscribers: null }), active).reason,
+    ).toBeNull()
   })
 })
