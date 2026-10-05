@@ -313,12 +313,8 @@
           "name": "events_allowance_pda_allowances_pda_fk",
           "tableFrom": "events",
           "tableTo": "allowances",
-          "columnsFrom": [
-            "allowance_pda"
-          ],
-          "columnsTo": [
-            "pda"
-          ],
+          "columnsFrom": ["allowance_pda"],
+          "columnsTo": ["pda"],
           "onDelete": "no action",
           "onUpdate": "no action"
         }

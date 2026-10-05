@@ -10,8 +10,8 @@ import type {
   AllowanceStatus,
   AllowanceUnreadableReason,
   EventKind,
-  ListedAllowance,
   ListEventsResponse,
+  ListedAllowance,
   RejectReason,
 } from '@cancelchain/shared'
 import { rejectReasonLabel, SECONDS_PER_DAY, toU64 } from '@cancelchain/shared'
