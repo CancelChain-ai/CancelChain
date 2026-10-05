@@ -16,6 +16,7 @@ import {
 import { describe, expect, it } from 'vitest'
 import { type AppDeps, createApp } from '../app.js'
 import { createLogger } from '../logger.js'
+import { createStreamHub } from '../stream.js'
 import { reconcile } from './allowances.js'
 import type { HealthDeps } from './health.js'
 
@@ -89,6 +90,7 @@ function app(allowances: Partial<AppDeps['allowances']> = {}) {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
     },
+    stream: { hub: idleHub() },
     signatures: {
       history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
     },
@@ -531,3 +533,11 @@ describe('сховище недосяжне', () => {
     expect(apiErrorSchema.parse(await res.json()).error.code).toBe('INTERNAL')
   })
 })
+
+/** A stream hub nobody notifies: the stream route exists, nothing flows. */
+function idleHub() {
+  return createStreamHub({
+    read: { allowance: async () => null, event: async () => null },
+    logger: createLogger('silent'),
+  })
+}

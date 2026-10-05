@@ -10,6 +10,7 @@ import { type HealthDeps, healthRoute } from './routes/health.js'
 import { type MerchantsDeps, merchantPlansRoute, merchantSignInRoute } from './routes/merchants.js'
 import { type PlansDeps, plansRoute } from './routes/plans.js'
 import { type SignaturesDeps, signaturesRoute } from './routes/signatures.js'
+import { type StreamDeps, streamRoute } from './routes/stream.js'
 import type { AppEnv } from './types.js'
 
 export type AppDeps = {
@@ -19,6 +20,7 @@ export type AppDeps = {
   blockhash: BlockhashDeps
   signatures: SignaturesDeps
   events: EventsDeps
+  stream: StreamDeps
   merchants: MerchantsDeps
   plans: PlansDeps
   rateLimit?: RateLimitOptions
@@ -67,6 +69,7 @@ export function createApp(deps: AppDeps) {
     .route('/', allowanceRoute(deps.allowances))
     .route('/', signaturesRoute(deps.signatures))
     .route('/', eventsRoute(deps.events))
+    .route('/', streamRoute(deps.stream))
     .route('/', blockhashRoute(deps.blockhash))
     .route('/', merchantSignInRoute(deps.merchants))
     .route('/', merchantPlansRoute(deps.merchants))

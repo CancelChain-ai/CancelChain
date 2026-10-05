@@ -46,6 +46,11 @@ describe('streamMessageSchema', () => {
     expect(streamMessageSchema.safeParse({ type: 'allowance.deleted' }).success).toBe(false)
   })
 
+  it('accepts the two "read everything again" signals, which carry nothing', () => {
+    expect(streamMessageSchema.parse({ type: 'ready' })).toEqual({ type: 'ready' })
+    expect(streamMessageSchema.parse({ type: 'resync' })).toEqual({ type: 'resync' })
+  })
+
   it('accepts an appended event', () => {
     const message = {
       type: 'event.appended' as const,

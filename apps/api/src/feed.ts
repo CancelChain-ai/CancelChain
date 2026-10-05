@@ -1,4 +1,4 @@
-import { allowances, events, indexerHeartbeat } from '@cancelchain/db'
+import { allowances, type EventRow, events, indexerHeartbeat } from '@cancelchain/db'
 import { type AllowanceEvent, eventSchema, fromU64 } from '@cancelchain/shared'
 import { and, desc, eq, min, type SQL, sql } from 'drizzle-orm'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
@@ -122,23 +122,35 @@ export async function readFeed(
 
   return {
     tracked: true,
-    items: shown.map((row) =>
-      // The row was written by another process; its shape is checked, not trusted.
-      eventSchema.parse({
-        id: row.id.toString(),
-        allowancePda: row.allowancePda,
-        kind: row.kind,
-        amount: row.amount === null ? null : fromU64(row.amount),
-        reason: row.reason,
-        signature: row.signature,
-        slot: row.slot,
-        blockTime: iso(row.blockTime),
-        chargesStopAt: row.chargesStopAt === null ? null : iso(row.chargesStopAt),
-      }),
-    ),
+    items: shown.map(eventFromRow),
     nextCursor,
     truncatedAt,
   }
+}
+
+/** One stored row in the contract's shape. It was written by another process; its shape is checked, not trusted. */
+function eventFromRow(row: EventRow): AllowanceEvent {
+  return eventSchema.parse({
+    id: row.id.toString(),
+    allowancePda: row.allowancePda,
+    kind: row.kind,
+    amount: row.amount === null ? null : fromU64(row.amount),
+    reason: row.reason,
+    signature: row.signature,
+    slot: row.slot,
+    blockTime: iso(row.blockTime),
+    chargesStopAt: row.chargesStopAt === null ? null : iso(row.chargesStopAt),
+  })
+}
+
+/** One event by its id, for the live stream (`T042`); `null` when the store has no such row. */
+export async function readEvent(db: FeedDb, id: string): Promise<AllowanceEvent | null> {
+  const [row] = await db
+    .select()
+    .from(events)
+    .where(eq(events.id, BigInt(id)))
+    .limit(1)
+  return row === undefined ? null : eventFromRow(row)
 }
 
 /** The indexer's last heartbeat, or `null` when it has never run against this store. */

@@ -9,17 +9,19 @@ import {
   toAddress,
   verifyWalletSignature,
 } from '@cancelchain/chain'
-import { plans } from '@cancelchain/db'
+import { plans, STREAM_CHANNEL } from '@cancelchain/db'
 import type { Plan } from '@cancelchain/shared'
 import { fromU64, planSchema, toU64 } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
 import { eq } from 'drizzle-orm'
 import { createApp } from './app.js'
 import { readCachedAllowance } from './cache.js'
-import { createDb, type Db } from './db.js'
-import { apiConfigFromEnv, merchantAuthConfig } from './env.js'
-import { heartbeatAt, readFeed } from './feed.js'
+import { createDb, type Db, listenConnection } from './db.js'
+import { apiConfigFromEnv, listenDatabaseUrl, merchantAuthConfig } from './env.js'
+import { heartbeatAt, readEvent, readFeed } from './feed.js'
+import { startListener } from './listen.js'
 import { createLogger } from './logger.js'
+import { createStreamHub } from './stream.js'
 
 /**
  * Точка входу сервісу. Усе, що тут відбувається, — читання оточення, створення
@@ -79,7 +81,17 @@ function main(): void {
   // Кидає при старті, якщо секрет або домен не налаштовані: `401` на чесному
   // підписі — найгірший спосіб дізнатися про порожній `JWT_SECRET`.
   const auth = merchantAuthConfig(config)
+  // Throws at start too: a stream that never hears the database looks exactly
+  // like a quiet wallet (`T042`).
+  const listenUrl = listenDatabaseUrl(config)
   const database = createDb(config)
+  const hub = createStreamHub({
+    read: {
+      allowance: (pda) => readCachedAllowance(database.db, pda),
+      event: (id) => readEvent(database.db, id),
+    },
+    logger,
+  })
 
   const app = createApp({
     logger,
@@ -107,6 +119,7 @@ function main(): void {
       feed: (pda, page) => readFeed(database.db, pda, page),
       aliveAt: () => heartbeatAt(database.db),
     },
+    stream: { hub },
     signatures: {
       // Стрічка на вимогу (`T030`): сховище порожнє до `T038`, тож історія
       // адреси береться з мережі на кожен запит картки.
@@ -162,13 +175,29 @@ function main(): void {
     logger.info({ port: info.port, cluster: chain.cluster }, 'api listening')
   })
 
+  const listener = startListener({
+    connect: () => listenConnection(listenUrl),
+    notify: async (channel, payload) => {
+      await database.sql.notify(channel, payload)
+    },
+    channel: STREAM_CHANNEL,
+    onNotice: (payload) => void hub.notify(payload),
+    onListen: () => hub.resync(),
+    logger,
+  })
+
   // Railway надсилає SIGTERM при перевикатці. Без цього пул до пулера лишається
   // відкритим до таймауту, а конекшенів на free tier усього два.
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {
       logger.info({ signal }, 'shutting down')
+      // Open streams would keep `server.close` waiting forever: end them first.
+      hub.close()
       server.close(() => {
-        void database.close().finally(() => process.exit(0))
+        void listener
+          .stop()
+          .then(() => database.close())
+          .finally(() => process.exit(0))
       })
     })
   }

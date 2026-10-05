@@ -4,6 +4,7 @@ import { apiErrorSchema, getPlanViewResponseSchema } from '@cancelchain/shared'
 import { describe, expect, it } from 'vitest'
 import { type AppDeps, createApp } from '../app.js'
 import { createLogger } from '../logger.js'
+import { createStreamHub } from '../stream.js'
 import type { PlansDeps } from './plans.js'
 
 const MERCHANT = toAddress('FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF')
@@ -89,6 +90,7 @@ function app(overrides: Partial<PlansDeps> = {}) {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
     },
+    stream: { hub: idleHub() },
     signatures: { history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }) },
     merchants: {
       jwtSecret: 'test-secret-at-least-32-characters',
@@ -215,3 +217,11 @@ describe('GET /v1/plans/:pda', () => {
     expect((await server.request(`/v1/plans/${PLAN_PDA}?subscriber=nope`)).status).toBe(400)
   })
 })
+
+/** A stream hub nobody notifies: the stream route exists, nothing flows. */
+function idleHub() {
+  return createStreamHub({
+    read: { allowance: async () => null, event: async () => null },
+    logger: createLogger('silent'),
+  })
+}

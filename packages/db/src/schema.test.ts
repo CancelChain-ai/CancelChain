@@ -7,8 +7,10 @@ import {
   EVENT_KINDS,
   REJECT_REASONS,
 } from '@cancelchain/shared'
+import { getTableColumns } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
 import { allowances, events, indexerCursor, merchants, plans, pushSubscriptions } from './schema.js'
+import { STREAM_CHANNEL } from './stream.js'
 
 const migrationsDir = join(fileURLToPath(new URL('..', import.meta.url)), 'drizzle')
 
@@ -93,6 +95,33 @@ describe('migration', () => {
   it('keeps pause and scheduled end available only to plan subscriptions', () => {
     expect(migrations).toContain('"allowances_pause_is_subscription_only"')
     expect(migrations).toContain('"allowances_ends_at_is_subscription_only"')
+  })
+})
+
+describe('stream notifications (T042)', () => {
+  it('announces on the channel the API listens to, and on no other', () => {
+    const channels = [...migrations.matchAll(/pg_notify\('([^']+)'/g)].map((match) => match[1])
+    expect(channels.length).toBeGreaterThan(0)
+    expect(new Set(channels)).toEqual(new Set([STREAM_CHANNEL]))
+  })
+
+  it('announces a changed permission on every visible column, and not on sync bookkeeping', () => {
+    // A column added later and left out here would change silently on screen.
+    const trigger = migrations.match(
+      /CREATE TRIGGER "allowances_stream_notify_update"[\s\S]*?EXECUTE FUNCTION/,
+    )?.[0]
+    expect(trigger).toBeDefined()
+    const bookkeeping = new Set(['pda', 'last_slot', 'synced_at'])
+    for (const column of Object.values(getTableColumns(allowances))) {
+      const old = `OLD."${column.name}"`
+      if (bookkeeping.has(column.name)) expect(trigger, column.name).not.toContain(old)
+      else expect(trigger, column.name).toContain(old)
+    }
+  })
+
+  it('announces a stored event and a stored permission', () => {
+    expect(migrations).toContain('AFTER INSERT ON "events"')
+    expect(migrations).toContain('AFTER INSERT ON "allowances"')
   })
 })
 

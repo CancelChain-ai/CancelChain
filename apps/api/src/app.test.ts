@@ -8,6 +8,7 @@ import { type AppDeps, createApp } from './app.js'
 import { createLogger } from './logger.js'
 import { RATE_LIMIT } from './rateLimit.js'
 import type { HealthDeps } from './routes/health.js'
+import { createStreamHub } from './stream.js'
 import { validate } from './validate.js'
 
 const SLOT = 312_345_678
@@ -41,6 +42,7 @@ function app(overrides: Partial<AppDeps> = {}) {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
     },
+    stream: { hub: idleHub() },
     signatures: {
       history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
     },
@@ -263,3 +265,26 @@ describe('CORS для сторінки на іншому хості', () => {
     expect(res.headers.get('access-control-allow-origin')).toBe(PAGES)
   })
 })
+
+describe('/v1/stream у складі застосунку (T042)', () => {
+  const PAGES = 'https://cancelchain-ai.github.io'
+
+  it('підключений і несе CORS — EventSource зі сторінки на іншому хості його читає', async () => {
+    const owner = 'CuXtQLBvSmH5RJs5N7tNtDEUa5gR1mK9PUgfruHCvnSR'
+    const res = await app({ corsOrigins: [PAGES] }).request(`/v1/stream?owner=${owner}`, {
+      headers: { origin: PAGES },
+    })
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/event-stream')
+    expect(res.headers.get('access-control-allow-origin')).toBe(PAGES)
+    await res.body?.cancel()
+  })
+})
+
+/** A stream hub nobody notifies: the stream route exists, nothing flows. */
+function idleHub() {
+  return createStreamHub({
+    read: { allowance: async () => null, event: async () => null },
+    logger: createLogger('silent'),
+  })
+}

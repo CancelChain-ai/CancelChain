@@ -2,7 +2,14 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import type { AllowanceReadOne, ReadAllowance } from '@cancelchain/chain'
 import { findSubscriptionAuthority } from '@cancelchain/chain'
-import { allowances, events, indexerCursor, indexerHeartbeat, U64_MAX } from '@cancelchain/db'
+import {
+  allowances,
+  events,
+  indexerCursor,
+  indexerHeartbeat,
+  STREAM_CHANNEL,
+  U64_MAX,
+} from '@cancelchain/db'
 import { PGlite } from '@electric-sql/pglite'
 import type { Address } from '@solana/kit'
 import { eq } from 'drizzle-orm'
@@ -746,5 +753,97 @@ describe('store — u64 amounts (T041c)', () => {
       /allowances_spent_in_period_u64/,
     )
     await expect(client.exec('UPDATE events SET amount = -1')).rejects.toThrow(/events_amount_u64/)
+  })
+})
+
+describe('store — what it announces to the live stream (T042)', () => {
+  /** Notifications PGlite delivered on the stream channel, parsed. */
+  async function listening() {
+    const heard: Record<string, unknown>[] = []
+    const unlisten = await client.listen(STREAM_CHANNEL, (payload) => {
+      heard.push(JSON.parse(payload))
+    })
+    return {
+      heard,
+      unlisten,
+      /** Delivery follows the commit asynchronously; give it a few turns. */
+      async settle() {
+        for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+      },
+    }
+  }
+
+  it('a new permission and its creation: the row first, then the event — both with the owner', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription())
+    const stream = await listening()
+
+    await store.write(await decodeTransaction(fixture('subscribe')))
+    await stream.settle()
+    await stream.unlisten()
+
+    const [created] = await rowsOf()
+    expect(stream.heard).toEqual([
+      { kind: 'allowance', pda: SUBSCRIPTION, owner: OWNER },
+      { kind: 'event', id: String(created?.id), pda: SUBSCRIPTION, owner: OWNER },
+    ])
+  })
+
+  it('a replayed transaction announces nothing: no new row, and a resync is not a change', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription())
+    const decoded = await decodeTransaction(fixture('subscribe'))
+    await store.write(decoded)
+    const stream = await listening()
+
+    await store.write(decoded)
+    await db
+      .update(allowances)
+      .set({ syncedAt: '2026-10-05T00:00:00.000Z', lastSlot: 505_300_000 })
+      .where(eq(allowances.pda, SUBSCRIPTION))
+    await store.heartbeat()
+    await stream.settle()
+    await stream.unlisten()
+
+    expect(stream.heard).toEqual([])
+  })
+
+  it('a cancellation announces the changed permission and the cancelled event', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription())
+    await store.write(await decodeTransaction(fixture('subscribe')))
+    chain.open(subscription({ endsAt: CHARGES_STOP_AT }), 505_548_000)
+    const stream = await listening()
+
+    await store.write(await decodeTransaction(fixture('cancel-subscription')))
+    await stream.settle()
+    await stream.unlisten()
+
+    const cancelled = (await rowsOf()).find((row) => row.kind === 'cancelled')
+    expect(stream.heard).toEqual([
+      { kind: 'allowance', pda: SUBSCRIPTION, owner: OWNER },
+      { kind: 'event', id: String(cancelled?.id), pda: SUBSCRIPTION, owner: OWNER },
+    ])
+  })
+
+  it('a write that rolls back announces nothing', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription())
+    await store.write(await decodeTransaction(fixture('subscribe')))
+    const stream = await listening()
+
+    await expect(
+      db.transaction(async (tx) => {
+        await tx
+          .update(allowances)
+          .set({ status: 'revoked' })
+          .where(eq(allowances.pda, SUBSCRIPTION))
+        throw new Error('the indexer died mid-write')
+      }),
+    ).rejects.toThrow()
+    await stream.settle()
+    await stream.unlisten()
+
+    expect(stream.heard).toEqual([])
   })
 })

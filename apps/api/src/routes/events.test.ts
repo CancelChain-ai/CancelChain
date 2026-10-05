@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import { type AppDeps, createApp } from '../app.js'
 import { type FeedPage, InvalidCursorError } from '../feed.js'
 import { createLogger } from '../logger.js'
+import { createStreamHub } from '../stream.js'
 
 /**
  * `GET /v1/allowances/:pda/events` — `T041`. The query itself is checked on
@@ -61,6 +62,7 @@ function app(events: Partial<AppDeps['events']> = {}) {
       now: () => NOW,
       ...events,
     },
+    stream: { hub: idleHub() },
     signatures: {
       history: async () => ({ items: [], syncedAt: '2026-10-03T12:00:00.000Z', more: false }),
     },
@@ -165,3 +167,11 @@ describe('GET /v1/allowances/:pda/events', () => {
     expect(response.status).toBe(400)
   })
 })
+
+/** A stream hub nobody notifies: the stream route exists, nothing flows. */
+function idleHub() {
+  return createStreamHub({
+    read: { allowance: async () => null, event: async () => null },
+    logger: createLogger('silent'),
+  })
+}

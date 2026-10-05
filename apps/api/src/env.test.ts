@@ -6,6 +6,8 @@ import {
   DEFAULT_PORT,
   DirectDatabaseConnectionError,
   databasePort,
+  ListenDatabaseNotConfiguredError,
+  listenDatabaseUrl,
   MerchantAuthNotConfiguredError,
   merchantAuthConfig,
   POOLER_PORT,
@@ -165,5 +167,40 @@ describe('merchantAuthConfig', () => {
       AUTH_DOMAIN: 'localhost:8879',
     })
     expect(merchantAuthConfig(parsed)).toEqual({ jwtSecret: SECRET, domain: 'localhost:8879' })
+  })
+})
+
+describe('listenDatabaseUrl (T042)', () => {
+  const SESSION = 'postgresql://user:pass@aws-0-eu.pooler.supabase.com:5432/postgres'
+
+  it('takes DATABASE_LISTEN_URL — the session the stream listens on', () => {
+    const config = apiConfigFromEnv({ DATABASE_URL: POOLED, DATABASE_LISTEN_URL: SESSION })
+    expect(listenDatabaseUrl(config)).toBe(SESSION)
+  })
+
+  it('refuses the transaction pooler, where LISTEN hears nothing', () => {
+    const config = apiConfigFromEnv({ DATABASE_URL: POOLED, DATABASE_LISTEN_URL: POOLED })
+    expect(() => listenDatabaseUrl(config)).toThrow(ListenDatabaseNotConfiguredError)
+    expect(() => listenDatabaseUrl(config)).toThrow(/transaction pooler/)
+  })
+
+  it('refuses to start without it, rather than serve a stream that never speaks', () => {
+    for (const env of [
+      { DATABASE_URL: POOLED },
+      { DATABASE_URL: POOLED, DATABASE_LISTEN_URL: '' },
+    ]) {
+      expect(() => listenDatabaseUrl(apiConfigFromEnv(env))).toThrow(/DATABASE_LISTEN_URL is empty/)
+    }
+  })
+
+  it('listens on the direct connection itself when one is explicitly allowed', () => {
+    const config = apiConfigFromEnv({ DATABASE_URL: DIRECT, ALLOW_DIRECT_DATABASE: 'true' })
+    expect(listenDatabaseUrl(config)).toBe(DIRECT)
+  })
+
+  it('wants a postgres URL', () => {
+    expect(() =>
+      apiConfigFromEnv({ DATABASE_URL: POOLED, DATABASE_LISTEN_URL: 'redis://host:6379' }),
+    ).toThrow()
   })
 })

@@ -224,8 +224,19 @@ export const streamQuerySchema = z.object({
   owner: addressSchema,
 })
 
-/** Події SSE `/v1/stream`. */
+/**
+ * Події SSE `/v1/stream` (`T042`). Кожна йде полем `event:` з тим самим `type`
+ * і повним повідомленням у `data:`.
+ *
+ * `allowance.updated` несе **збережену** копію дозволу — це сигнал звірити його
+ * з мережею (`FR-024`), а не заміна її стану. `ready` (потік відкрито) і
+ * `resync` (сервер міг пропустити зміни, поки не слухав базу) кажуть одне:
+ * перечитай усе. Повтору пропущеного за `Last-Event-ID` немає навмисно — він
+ * покрив би лише події, а не знімки дозволів, і обіцяв би повноту, якої немає.
+ */
 export const streamMessageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('ready') }),
+  z.object({ type: z.literal('resync') }),
   z.object({
     type: z.literal('allowance.updated'),
     allowance: allowanceSchema,
@@ -238,6 +249,12 @@ export const streamMessageSchema = z.discriminatedUnion('type', [
 ])
 
 export type StreamMessage = z.infer<typeof streamMessageSchema>
+
+/**
+ * A comment line goes down an idle stream this often, so proxies on the way do
+ * not close it as dead and a client can tell a quiet stream from a broken one.
+ */
+export const STREAM_HEARTBEAT_MS = 20_000
 
 export const pushSubscribeBodySchema = z.object({
   owner: addressSchema,

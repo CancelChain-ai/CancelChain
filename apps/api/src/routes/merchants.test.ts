@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { type AppDeps, createApp } from '../app.js'
 import { issueMerchantToken, MIN_JWT_SECRET_LENGTH } from '../auth.js'
 import { createLogger } from '../logger.js'
+import { createStreamHub } from '../stream.js'
 import type { HealthDeps } from './health.js'
 import { type MerchantsDeps, planRowFrom } from './merchants.js'
 
@@ -77,6 +78,7 @@ function app(overrides: Partial<MerchantsDeps> = {}) {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
     },
+    stream: { hub: idleHub() },
     signatures: {
       history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }),
     },
@@ -411,3 +413,11 @@ describe('planRowFrom', () => {
     expect(planRowFrom(snapshot({ createdAt: null }), 'Pro')).toBeNull()
   })
 })
+
+/** A stream hub nobody notifies: the stream route exists, nothing flows. */
+function idleHub() {
+  return createStreamHub({
+    read: { allowance: async () => null, event: async () => null },
+    logger: createLogger('silent'),
+  })
+}

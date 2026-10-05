@@ -3,6 +3,7 @@ import { apiErrorSchema, listSignaturesResponseSchema } from '@cancelchain/share
 import { describe, expect, it } from 'vitest'
 import { type AppDeps, createApp } from '../app.js'
 import { createLogger } from '../logger.js'
+import { createStreamHub } from '../stream.js'
 import type { HealthDeps } from './health.js'
 
 /**
@@ -57,6 +58,7 @@ function app(signatures: Partial<AppDeps['signatures']> = {}) {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
     },
+    stream: { hub: idleHub() },
     signatures: { history: async () => history(), ...signatures },
     // Маршрути мерчанта до цих перевірок стосунку не мають; заглушка стоїть
     // лише тому, що `createApp` збирає весь застосунок, а не окрему ручку.
@@ -178,3 +180,11 @@ describe('GET /v1/allowances/:pda/signatures', () => {
     expect(body.items[0]?.failed).toBe(true)
   })
 })
+
+/** A stream hub nobody notifies: the stream route exists, nothing flows. */
+function idleHub() {
+  return createStreamHub({
+    read: { allowance: async () => null, event: async () => null },
+    logger: createLogger('silent'),
+  })
+}

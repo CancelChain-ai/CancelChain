@@ -2,6 +2,7 @@ import * as schema from '@cancelchain/db'
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js'
 import postgres from 'postgres'
 import { type ApiConfig, assertPooledDatabase } from './env.js'
+import type { ListenConnection } from './listen.js'
 
 /**
  * Підключення до Supabase через **transaction pooler на 6543**.
@@ -46,5 +47,21 @@ export function createDb(config: ApiConfig): DbHandle {
       await sql`select 1`
     },
     close: () => sql.end({ timeout: 5 }),
+  }
+}
+
+/**
+ * The stream's listening session (`T042`): one connection to a **session**
+ * endpoint, used for `LISTEN` and nothing else — see `listenDatabaseUrl`.
+ * Probes go out through the ordinary pool (`DbHandle.sql.notify`), so this
+ * opens no second connection of its own.
+ */
+export function listenConnection(url: string): ListenConnection {
+  const sql = postgres(url, { max: 1, connect_timeout: CONNECT_TIMEOUT_SECONDS })
+  return {
+    listen: async (channel, onNotify, onListen) => {
+      await sql.listen(channel, onNotify, onListen)
+    },
+    close: () => sql.end({ timeout: 1 }),
   }
 }

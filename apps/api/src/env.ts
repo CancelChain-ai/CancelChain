@@ -1,4 +1,4 @@
-import { assertPooledDatabaseUrl, postgresUrl } from '@cancelchain/db'
+import { assertPooledDatabaseUrl, databasePort, POOLER_PORT, postgresUrl } from '@cancelchain/db'
 import { z } from 'zod'
 import { MIN_JWT_SECRET_LENGTH } from './auth.js'
 
@@ -32,6 +32,14 @@ const originSchema = z.string().refine((value) => {
 export const apiConfigSchema = z.object({
   port: z.coerce.number().int().min(1).max(65_535).default(DEFAULT_PORT),
   databaseUrl: databaseUrlSchema,
+  /**
+   * The session the live stream listens on (`T042`). Not the transaction pooler:
+   * it hands the connection to another client between statements, and a
+   * `LISTEN` made there hears nothing — silently. On Supabase this is the
+   * session pooler, port 5432. Required unless `allowDirectDatabase`, where
+   * `databaseUrl` itself is a direct connection — see `listenDatabaseUrl`.
+   */
+  listenDatabaseUrl: databaseUrlSchema.optional(),
   logLevel: z.enum(LOG_LEVELS).default('info'),
   /**
    * Знімає вимогу підключатися через pooler. За замовчуванням `false`: помилковий
@@ -119,6 +127,33 @@ export function merchantAuthConfig(config: ApiConfig): MerchantAuthConfig {
   return { jwtSecret: config.jwtSecret, domain: config.authDomain }
 }
 
+export class ListenDatabaseNotConfiguredError extends Error {
+  constructor(detail: string) {
+    super(
+      `the live stream cannot listen to the database: ${detail}. Set DATABASE_LISTEN_URL ` +
+        'to a session connection — on Supabase the session pooler, port 5432.',
+    )
+    this.name = 'ListenDatabaseNotConfiguredError'
+  }
+}
+
+/**
+ * Where the stream's `LISTEN` goes, or a named refusal at start — the same
+ * reasoning as `merchantAuthConfig`: a stream that never hears anything looks
+ * exactly like a quiet wallet.
+ */
+export function listenDatabaseUrl(config: ApiConfig): string {
+  const url =
+    config.listenDatabaseUrl ?? (config.allowDirectDatabase ? config.databaseUrl : undefined)
+  if (url === undefined) throw new ListenDatabaseNotConfiguredError('DATABASE_LISTEN_URL is empty')
+  if (databasePort(url) === String(POOLER_PORT)) {
+    throw new ListenDatabaseNotConfiguredError(
+      `it points at port ${POOLER_PORT}, the transaction pooler, where LISTEN hears nothing`,
+    )
+  }
+  return url
+}
+
 function boolFromEnv(value: string | undefined): boolean | undefined {
   if (value === undefined) return undefined
   return value === 'true' || value === '1'
@@ -128,6 +163,7 @@ export function apiConfigFromEnv(env: Record<string, string | undefined>): ApiCo
   return apiConfigSchema.parse({
     port: env.PORT,
     databaseUrl: env.DATABASE_URL,
+    listenDatabaseUrl: env.DATABASE_LISTEN_URL === '' ? undefined : env.DATABASE_LISTEN_URL,
     logLevel: env.LOG_LEVEL,
     allowDirectDatabase: boolFromEnv(env.ALLOW_DIRECT_DATABASE),
     corsOrigins: originsFromEnv(env.CORS_ORIGINS),
