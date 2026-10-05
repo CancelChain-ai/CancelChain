@@ -110,8 +110,18 @@ function main(): void {
       // `confirmed`, as everywhere else here: without it the node answers at
       // `finalized`, ~13 s behind, and a subscription just signed stays invisible
       // longer than `SC-010` allows (`T037`).
-      list: (owner) => readAllowances(chain, { owner: toAddress(owner), commitment: 'confirmed' }),
-      get: (pda) => readAllowance(chain, { pda: toAddress(pda), commitment: 'confirmed' }),
+      list: (owner, minSlot) =>
+        readAllowances(chain, {
+          owner: toAddress(owner),
+          commitment: 'confirmed',
+          ...(minSlot === undefined ? {} : { minContextSlot: minSlot }),
+        }),
+      get: (pda, minSlot) =>
+        readAllowance(chain, {
+          pda: toAddress(pda),
+          commitment: 'confirmed',
+          ...(minSlot === undefined ? {} : { minContextSlot: minSlot }),
+        }),
       cached: (pda) => readCachedAllowance(database.db, pda),
       settlementMint: chain.usdcMint,
     },

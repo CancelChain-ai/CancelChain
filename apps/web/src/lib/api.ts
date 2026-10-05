@@ -64,7 +64,15 @@ export class ApiContractError extends Error {
 }
 
 export interface ApiClient {
-  listAllowances(owner: Address, signal?: AbortSignal): Promise<ListAllowancesResponse>
+  /**
+   * `minSlot` — the oldest slot the network may answer from (`T042a`): after
+   * `allowance.updated`, a read from before that change would undo it on screen.
+   */
+  listAllowances(
+    owner: Address,
+    signal?: AbortSignal,
+    minSlot?: number,
+  ): Promise<ListAllowancesResponse>
   /**
    * Один дозвіл за адресою. Гаманця тут не питають і не передають: дозволи
    * публічні в мережі, а `pda` вже й є тим, що ідентифікує запис.
@@ -73,7 +81,7 @@ export interface ApiClient {
    * тут: «за цією адресою нічого немає» — це відповідь, яку розрізняє джерело
    * (`source.ts`), а клієнт лишається однією тонкою межею з HTTP.
    */
-  getAllowance(pda: string, signal?: AbortSignal): Promise<GetAllowanceResponse>
+  getAllowance(pda: string, signal?: AbortSignal, minSlot?: number): Promise<GetAllowanceResponse>
   /**
    * Час життя транзакції відкликання. Береться в сервера, а не в браузера:
    * URL вузла з ключем провайдера в бандл не потрапляє (`routes/blockhash.ts`).
@@ -144,14 +152,22 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
   }
 
   return {
-    listAllowances: (owner, signal) =>
+    listAllowances: (owner, signal, minSlot) =>
       get(
-        `/v1/allowances?owner=${encodeURIComponent(owner)}`,
+        `/v1/allowances?owner=${encodeURIComponent(owner)}${
+          minSlot === undefined ? '' : `&minSlot=${minSlot}`
+        }`,
         listAllowancesResponseSchema,
         signal,
       ),
-    getAllowance: (pda, signal) =>
-      get(`/v1/allowances/${encodeURIComponent(pda)}`, getAllowanceResponseSchema, signal),
+    getAllowance: (pda, signal, minSlot) =>
+      get(
+        `/v1/allowances/${encodeURIComponent(pda)}${
+          minSlot === undefined ? '' : `?minSlot=${minSlot}`
+        }`,
+        getAllowanceResponseSchema,
+        signal,
+      ),
     getBlockhash: (signal) => get('/v1/blockhash', latestBlockhashResponseSchema, signal),
     listSignatures: (pda, limit, signal) =>
       get(
@@ -178,6 +194,14 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
         signal,
       ),
   }
+}
+
+/**
+ * The stream of one wallet's changes (`T042`). Built here, next to the paths
+ * the reads use, so the stream and the reads cannot point at two servers.
+ */
+export function streamUrl(baseUrl: string, owner: Address): string {
+  return `${baseUrl.replace(/\/+$/, '')}/v1/stream?owner=${encodeURIComponent(owner)}`
 }
 
 /**

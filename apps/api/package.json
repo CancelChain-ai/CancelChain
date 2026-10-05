@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.5",
+    "@solana/kit": "catalog:",
     "@types/node": "22.20.1",
     "tsx": "4.23.13",
     "typescript": "5.9.3",

@@ -1,5 +1,5 @@
 import type { Address, Base64EncodedBytes, ReadonlyUint8Array, Slot } from '@solana/kit'
-import { getBase64Decoder, lamports } from '@solana/kit'
+import { getBase64Decoder, getSolanaErrorFromJsonRpcError, lamports } from '@solana/kit'
 import {
   AccountDiscriminator,
   DELEGATOR_OFFSET,
@@ -23,9 +23,11 @@ import { createChainClient, PROGRAM_ADDRESS } from './client.js'
 import { findSubscription, findSubscriptionAuthority } from './pda.js'
 import {
   type AllowanceReader,
+  isMinContextSlotNotReached,
   type ProgramAccountsRpc,
   readAllowance,
   readAllowances,
+  SlotBehindError,
 } from './read.js'
 
 const OWNER = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU' as Address
@@ -213,6 +215,8 @@ function fakeRpc(world: World, slot: Slot = SLOT) {
   const calls: Call[] = []
   /** Authority reads, kept apart: the tests above them count reads of permissions and plans. */
   const authorityCalls: (readonly Address[])[] = []
+  /** Every request's config, authorities included, in the order sent. */
+  const configs: object[] = []
   const authorityAddresses = new Set([AUTHORITY, SUB_AUTHORITY])
   const byAddress = new Map(
     [...(world.atAddress ?? []), ...(world.authorities ?? LIVE_AUTHORITIES)].map((raw) => [
@@ -223,11 +227,13 @@ function fakeRpc(world: World, slot: Slot = SLOT) {
   const rpc: ProgramAccountsRpc = {
     getProgramAccounts(program, config) {
       calls.push({ kind: 'program', program, config })
+      configs.push(config)
       const plans = (config.filters ?? []).some((filter) => 'dataSize' in filter)
       const value = plans ? (world.allPlans ?? []) : (world.delegations ?? [])
       return { send: async () => ({ context: { slot }, value }) }
     },
-    getMultipleAccounts(addresses) {
+    getMultipleAccounts(addresses, config) {
+      configs.push(config)
       if (addresses.every((address) => authorityAddresses.has(address))) {
         authorityCalls.push(addresses)
       } else {
@@ -238,7 +244,7 @@ function fakeRpc(world: World, slot: Slot = SLOT) {
     },
   }
   const reader: AllowanceReader = { rpc, programAddress: PROGRAM_ADDRESS, usdcMint: MINT_A }
-  return { reader, calls, authorityCalls }
+  return { reader, calls, authorityCalls, configs }
 }
 
 const read = (reader: AllowanceReader, options: { fullPlanScan?: boolean } = {}) =>
@@ -314,6 +320,89 @@ describe('запит по дозволах — FR-006', () => {
 
     const call = calls[0]
     expect(call?.kind === 'program' && call.config.commitment).toBe('finalized')
+  })
+
+  /**
+   * `T042a`: a read after `allowance.updated` must not come from before that
+   * change. The floor goes to every request of the read — an authority closed in
+   * the same change decides the status as much as the permission does.
+   */
+  it('передає поріг слоту в читання повноважень і планів', async () => {
+    const { reader, calls, configs, authorityCalls } = fakeRpc({
+      delegations: [fixedAccount(), subscriptionAccount()],
+      atAddress: [planA()],
+    })
+    await readAllowances(reader, { owner: OWNER, now: NOW, minContextSlot: 325_100_442 })
+
+    expect(authorityCalls.length).toBeGreaterThan(0)
+    const [permissions, ...rest] = configs
+    expect(calls[0]?.kind).toBe('program')
+    expect(rest.length).toBeGreaterThanOrEqual(2)
+    for (const config of rest) expect(config).toMatchObject({ minContextSlot: 325_100_442n })
+    /*
+     * Not to `getProgramAccounts`: the public devnet node refuses it with
+     * `-32000`, which kit cannot tell from any other server error. The answer's
+     * slot is checked instead — the next test.
+     */
+    expect(permissions !== undefined && 'minContextSlot' in permissions).toBe(false)
+  })
+
+  /*
+   * An empty wallet on purpose: no plan or authority read follows, so nothing
+   * but the check on `getProgramAccounts` itself stands between an old answer
+   * and the screen — and "nothing here" from the past is what hides a new grant.
+   */
+  it('відповідь, старіша за поріг, — відмова, яку можна перечекати, а не список із минулого', async () => {
+    const { reader } = fakeRpc({}, SLOT)
+    const reading = readAllowances(reader, {
+      owner: OWNER,
+      now: NOW,
+      minContextSlot: Number(SLOT) + 1,
+    })
+
+    await expect(reading).rejects.toBeInstanceOf(SlotBehindError)
+    expect(isMinContextSlotNotReached(await reading.catch((error: unknown) => error))).toBe(true)
+  })
+
+  it('поріг рівно на слоті відповіді — відповідь приймається', async () => {
+    const { reader } = fakeRpc({ delegations: [fixedAccount()] }, SLOT)
+    const result = await readAllowances(reader, {
+      owner: OWNER,
+      now: NOW,
+      minContextSlot: Number(SLOT),
+    })
+
+    expect(result.allowances).toHaveLength(1)
+  })
+
+  it('без порога не передає minContextSlot узагалі', async () => {
+    const { reader, configs } = fakeRpc({
+      delegations: [fixedAccount(), subscriptionAccount()],
+      atAddress: [planA()],
+    })
+    await read(reader)
+
+    for (const config of configs) expect('minContextSlot' in config).toBe(false)
+  })
+})
+
+describe('isMinContextSlotNotReached', () => {
+  it('впізнає відмову вузла, що відстає, у тій формі, яку будує kit', () => {
+    const behind = getSolanaErrorFromJsonRpcError({
+      code: -32016,
+      message: 'Minimum context slot has not been reached',
+      data: { contextSlot: 325_100_400 },
+    })
+    expect(isMinContextSlotNotReached(behind)).toBe(true)
+  })
+
+  it('не плутає її з іншими відмовами вузла', () => {
+    const unhealthy = getSolanaErrorFromJsonRpcError({
+      code: -32005,
+      message: 'Node is unhealthy',
+    })
+    expect(isMinContextSlotNotReached(unhealthy)).toBe(false)
+    expect(isMinContextSlotNotReached(new Error('Minimum context slot'))).toBe(false)
   })
 })
 
@@ -663,6 +752,25 @@ describe('readAllowance — один дозвіл за адресою', () => {
    * Картка не має права коштувати `getProgramAccounts` по всій програмі: ця
    * ручка викликається щоразу перед підписом (`FR-024`), а не раз на екран.
    */
+  it('поріг слоту доходить до картки: і до дозволу, і до його плану', async () => {
+    const { reader, configs } = fakeRpc({ atAddress: [subscriptionAccount(), planA()] })
+    await readAllowance(reader, { pda: SUB_PDA, now: NOW, minContextSlot: 7 })
+
+    expect(configs.length).toBeGreaterThanOrEqual(2)
+    for (const config of configs) expect(config).toMatchObject({ minContextSlot: 7n })
+  })
+
+  it('вузол, що мовчки знехтував порогом, не проходить: слот відповіді перевіряється', async () => {
+    const { reader } = fakeRpc({ atAddress: [fixedAccount()] }, SLOT)
+    const reading = readAllowance(reader, {
+      pda: FIXED_PDA,
+      now: NOW,
+      minContextSlot: Number(SLOT) + 1,
+    })
+
+    await expect(reading).rejects.toBeInstanceOf(SlotBehindError)
+  })
+
   it('читає рівно один акаунт, без проходу по програмі', async () => {
     const { reader, calls } = fakeRpc({ atAddress: [fixedAccount()] })
     const result = await one(reader, FIXED_PDA)

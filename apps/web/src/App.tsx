@@ -9,6 +9,7 @@ import { mockData, source } from './lib/source'
 import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
 import { useFeed } from './lib/useFeed'
+import { useStream } from './lib/useStream'
 import { useSubscribeReview } from './lib/useSubscribeReview'
 import Merchant from './pages/Merchant'
 import Subscribe, { LiveSubscribe } from './pages/Subscribe'
@@ -70,6 +71,11 @@ const App = () => {
    */
   const feed = useFeed(selectedId)
   const subscribeReview = useSubscribeReview(planPda, owner)
+  /**
+   * One stream for the whole page (`T042a`): it re-reads whatever the open
+   * screen shows, and the screens only say whether it is running.
+   */
+  const live = useStream(owner)
 
   const openPlan = (pda: string) => {
     setPlanPda(pda)
@@ -201,6 +207,7 @@ const App = () => {
                 onNetwork={source.onNetwork}
                 onOpen={openDetail}
                 cancel={cancel}
+                live={live}
               />
             )}
           </CancelFlow>
@@ -216,6 +223,7 @@ const App = () => {
                   onNetwork={source.onNetwork}
                   onOpen={openDetail}
                   cancel={cancel}
+                  live={live}
                 />
               )}
             </CancelFlow>
@@ -224,6 +232,7 @@ const App = () => {
               state={allowance}
               onBack={() => setView('subscriptions')}
               feed={feed}
+              live={live}
               // Мережу знає оточення гаманця, а не екран картки: посилання
               // будується тут і приходить туди готовим.
               explorerUrl={(signature) => explorerTxUrl(signature, cluster)}

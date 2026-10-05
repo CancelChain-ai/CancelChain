@@ -13,6 +13,7 @@ import {
   listAllowancesResponseSchema,
   listedAllowanceSchema,
 } from '@cancelchain/shared'
+import { getSolanaErrorFromJsonRpcError } from '@solana/kit'
 import { describe, expect, it } from 'vitest'
 import { type AppDeps, createApp } from '../app.js'
 import { createLogger } from '../logger.js'
@@ -541,3 +542,123 @@ function idleHub() {
     logger: createLogger('silent'),
   })
 }
+
+/**
+ * `T042a`: after `allowance.updated` the client asks for a read no older than
+ * that change. A node behind it refuses (`-32016`); the route waits that out a
+ * few slots, then names it — never answers from before the change.
+ */
+describe('minSlot — перечитка не старша за сповіщення', () => {
+  const behind = () =>
+    getSolanaErrorFromJsonRpcError({
+      code: -32016,
+      message: 'Minimum context slot has not been reached',
+      data: { contextSlot: SLOT - 3 },
+    })
+
+  /** A read that refuses `refusals` times, then answers; counts its calls and floors. */
+  function lagging<T>(refusals: number, answer: T) {
+    const floors: (number | undefined)[] = []
+    return {
+      floors,
+      read: async (_: string, minSlot: number | undefined) => {
+        floors.push(minSlot)
+        if (floors.length <= refusals) throw behind()
+        return answer
+      },
+    }
+  }
+
+  function retry() {
+    const waits: number[] = []
+    return {
+      waits,
+      behindRetry: { attempts: 3, delayMs: 400, sleep: async (ms: number) => void waits.push(ms) },
+    }
+  }
+
+  it('передає поріг у читання списку, і не передає, коли його немає', async () => {
+    const list = lagging(0, result())
+    const api = app({ list: list.read })
+
+    expect((await api.request(`/v1/allowances?owner=${OWNER}&minSlot=${SLOT}`)).status).toBe(200)
+    expect((await api.request(`/v1/allowances?owner=${OWNER}`)).status).toBe(200)
+    expect(list.floors).toEqual([SLOT, undefined])
+  })
+
+  it('чекає вузол, що відстає, і відповідає, коли той наздогнав', async () => {
+    const list = lagging(2, result({ allowances: [allowance()] }))
+    const { waits, behindRetry } = retry()
+    const res = await app({ list: list.read, behindRetry }).request(
+      `/v1/allowances?owner=${OWNER}&minSlot=${SLOT}`,
+    )
+
+    expect(res.status).toBe(200)
+    expect(listAllowancesResponseSchema.parse(await res.json()).items).toHaveLength(1)
+    expect(list.floors).toEqual([SLOT, SLOT, SLOT])
+    expect(waits).toEqual([400, 400])
+  })
+
+  it('вузол так і не наздогнав — названа відмова, а не відповідь із минулого', async () => {
+    const list = lagging(Number.POSITIVE_INFINITY, result())
+    const { waits, behindRetry } = retry()
+    const res = await app({ list: list.read, behindRetry }).request(
+      `/v1/allowances?owner=${OWNER}&minSlot=${SLOT}`,
+    )
+
+    expect(res.status).toBe(500)
+    const body = apiErrorSchema.parse(await res.json())
+    expect(body.error.code).toBe('INTERNAL')
+    expect(body.error.details).toEqual({ reason: 'node_behind', minSlot: SLOT })
+    expect(list.floors).toHaveLength(3)
+    expect(waits).toHaveLength(2)
+  })
+
+  it('інша відмова вузла не повторюється', async () => {
+    let calls = 0
+    const { waits, behindRetry } = retry()
+    const res = await app({
+      list: async () => {
+        calls++
+        throw new Error('fetch failed')
+      },
+      behindRetry,
+    }).request(`/v1/allowances?owner=${OWNER}&minSlot=${SLOT}`)
+
+    expect(res.status).toBe(500)
+    expect(calls).toBe(1)
+    expect(waits).toEqual([])
+  })
+
+  it('картка: той самий поріг, те саме очікування', async () => {
+    const get = lagging(1, onChain(allowance()))
+    const { waits, behindRetry } = retry()
+    const res = await app({ get: get.read, behindRetry }).request(
+      `/v1/allowances/${PDA}?minSlot=${SLOT}`,
+    )
+
+    expect(res.status).toBe(200)
+    expect(getAllowanceResponseSchema.parse(await res.json()).chainState?.slot).toBe(SLOT)
+    expect(get.floors).toEqual([SLOT, SLOT])
+    expect(waits).toEqual([400])
+  })
+
+  it('картка: вузол не наздогнав — названа відмова, а не NOT_FOUND', async () => {
+    const get = lagging(Number.POSITIVE_INFINITY, NO_ACCOUNT)
+    const { behindRetry } = retry()
+    const res = await app({ get: get.read, behindRetry }).request(
+      `/v1/allowances/${PDA}?minSlot=${SLOT}`,
+    )
+
+    expect(res.status).toBe(500)
+    expect(apiErrorSchema.parse(await res.json()).error.details).toMatchObject({
+      reason: 'node_behind',
+    })
+  })
+
+  it('поріг, що не є слотом, — 400', async () => {
+    const api = app()
+    expect((await api.request(`/v1/allowances?owner=${OWNER}&minSlot=-1`)).status).toBe(400)
+    expect((await api.request(`/v1/allowances/${PDA}?minSlot=latest`)).status).toBe(400)
+  })
+})

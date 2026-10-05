@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CancelControls, CancelState } from '../chain/revoke'
 import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
+import type { LiveState } from '../lib/useStream'
 import { viewFromAllowance as toView } from '../lib/view'
 import Subscriptions from './Subscriptions'
 
@@ -85,6 +86,37 @@ function show(state: AllowancesState, onCancel?: (id: string) => void) {
 }
 
 afterEach(cleanup)
+
+/**
+ * `T042a`: whether the list keeps itself current is said next to when it was
+ * read — and a stream that is down is not dressed up as live.
+ */
+describe('live updates', () => {
+  const live = (state: LiveState) =>
+    render(<Subscriptions state={ready()} walletLabel="4DYh…Jj96" onNetwork={true} live={state} />)
+
+  it('says the list is live once the stream is', () => {
+    live('live')
+    expect(screen.getByRole('status').textContent).toMatch(/^Live/)
+  })
+
+  it('says live updates are off when the stream is refused, not "live"', () => {
+    live('down')
+    const line = screen.getByRole('status')
+    expect(line.textContent).toMatch(/Live updates are off/)
+    expect(line.className).toMatch(/text-amber/)
+  })
+
+  it('says it is reconnecting while the stream is interrupted', () => {
+    live('reconnecting')
+    expect(screen.getByRole('status').textContent).toMatch(/reconnecting/)
+  })
+
+  it('says nothing when nothing streams', () => {
+    live('off')
+    expect(screen.queryByRole('status')).toBeNull()
+  })
+})
 
 describe('the state of the list', () => {
   it('asks for a wallet instead of showing an empty list', () => {

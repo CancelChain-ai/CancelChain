@@ -133,13 +133,14 @@ describe('GET /v1/stream', () => {
     })
   })
 
-  it('sends a comment down a quiet stream so proxies keep it open', async () => {
+  it('sends a named ping down a quiet stream, which the browser can see', async () => {
     const { app } = setup({ heartbeatMs: 20 })
     const stream = frames(await connect(app))
 
     const [, ping] = await stream.next(2)
 
-    expect(ping).toEqual({ event: null, data: null, comment: 'ping' })
+    expect(ping?.event).toBe('ping')
+    expect(streamMessageSchema.parse(JSON.parse(ping?.data ?? ''))).toEqual({ type: 'ping' })
   })
 
   it('gives the slot back when the client goes away', async () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  getAllowanceQuerySchema,
   latestBlockhashResponseSchema,
   listAllowancesQuerySchema,
   listAllowancesResponseSchema,
@@ -23,6 +24,21 @@ describe('listAllowancesQuerySchema', () => {
   it('demands a real address', () => {
     expect(listAllowancesQuerySchema.parse({ owner: OWNER })).toEqual({ owner: OWNER })
     expect(listAllowancesQuerySchema.safeParse({ owner: 'not-an-address' }).success).toBe(false)
+  })
+
+  it('takes a slot floor from the query string, and none when it is absent', () => {
+    expect(listAllowancesQuerySchema.parse({ owner: OWNER, minSlot: '325100442' }).minSlot).toBe(
+      325_100_442,
+    )
+    expect('minSlot' in listAllowancesQuerySchema.parse({ owner: OWNER })).toBe(false)
+    expect(getAllowanceQuerySchema.parse({}).minSlot).toBeUndefined()
+  })
+
+  it('refuses a slot floor that is not a slot', () => {
+    for (const minSlot of ['-1', '1.5', 'latest', '']) {
+      expect(listAllowancesQuerySchema.safeParse({ owner: OWNER, minSlot }).success).toBe(false)
+      expect(getAllowanceQuerySchema.safeParse({ minSlot }).success).toBe(false)
+    }
   })
 })
 
@@ -49,6 +65,10 @@ describe('streamMessageSchema', () => {
   it('accepts the two "read everything again" signals, which carry nothing', () => {
     expect(streamMessageSchema.parse({ type: 'ready' })).toEqual({ type: 'ready' })
     expect(streamMessageSchema.parse({ type: 'resync' })).toEqual({ type: 'resync' })
+  })
+
+  it('accepts the heartbeat as a message of its own', () => {
+    expect(streamMessageSchema.parse({ type: 'ping' })).toEqual({ type: 'ping' })
   })
 
   it('accepts an appended event', () => {

@@ -246,6 +246,15 @@ describe('what the network says about the card', () => {
     show(ready())
     expect(screen.getByText(/Read from the network at .*slot 400000000/)).toBeTruthy()
   })
+
+  it('says whether the card keeps itself current (T042a)', () => {
+    render(<Subscription state={ready()} onBack={() => {}} live="down" />)
+    expect(screen.getByRole('status').textContent).toMatch(/Live updates are off/)
+    cleanup()
+
+    show(ready())
+    expect(screen.queryByRole('status')).toBeNull()
+  })
 })
 
 describe('activity', () => {

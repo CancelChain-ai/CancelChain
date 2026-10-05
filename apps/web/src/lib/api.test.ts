@@ -7,6 +7,7 @@ import {
   createApiClient,
   describeFailure,
   type FetchLike,
+  streamUrl,
 } from './api'
 
 const OWNER = '4DYhzGx6J2xgJWs7nSCnTXgBdEnoQ9VnKfarJVz2Jj96' as Address
@@ -66,6 +67,27 @@ describe('createApiClient', () => {
     expect(result.items).toHaveLength(1)
     expect(result.items[0]?.assetSupported).toBe(true)
     expect(result.unreadable).toEqual([])
+  })
+
+  it('carries a slot floor when one is given (T042a), and none otherwise', async () => {
+    const list = respondWith(200, BODY)
+    await createApiClient('', list.fetch).listAllowances(OWNER, undefined, 412_345_678)
+    await createApiClient('', list.fetch).listAllowances(OWNER, undefined, 0)
+    const card = respondWith(200, CARD)
+    await createApiClient('', card.fetch).getAllowance(PDA, undefined, 412_345_678)
+
+    expect([...list.calls, ...card.calls].map((call) => call.url)).toEqual([
+      `/v1/allowances?owner=${OWNER}&minSlot=412345678`,
+      `/v1/allowances?owner=${OWNER}&minSlot=0`,
+      `/v1/allowances/${PDA}?minSlot=412345678`,
+    ])
+  })
+
+  it('points the stream at the same server as the reads', () => {
+    expect(streamUrl('', OWNER)).toBe(`/v1/stream?owner=${OWNER}`)
+    expect(streamUrl('https://api.example/', OWNER)).toBe(
+      `https://api.example/v1/stream?owner=${OWNER}`,
+    )
   })
 
   it('talks to its own origin when no API URL is configured', async () => {

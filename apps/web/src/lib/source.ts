@@ -81,7 +81,12 @@ export interface AllowanceSource {
   readonly requiresWallet: boolean
   /** Чи є за цим джерелом мережа. Від цього залежить, що застосунок каже про себе. */
   readonly onNetwork: boolean
-  listAllowances(owner: Address | null, signal?: AbortSignal): Promise<AllowanceList>
+  /** `minSlot` — see `ApiClient.listAllowances`; a source without a network ignores it. */
+  listAllowances(
+    owner: Address | null,
+    signal?: AbortSignal,
+    minSlot?: number,
+  ): Promise<AllowanceList>
   /**
    * Один дозвіл для екрана картки (`T024`).
    *
@@ -90,7 +95,11 @@ export interface AllowanceSource {
    * не помилкою: скасований дозвіл — це закритий акаунт, і екран мусить
    * сказати саме це, а не «не вдалося завантажити».
    */
-  getAllowance(id: string, signal?: AbortSignal): Promise<AllowanceDetailView | null>
+  getAllowance(
+    id: string,
+    signal?: AbortSignal,
+    minSlot?: number,
+  ): Promise<AllowanceDetailView | null>
   /**
    * Транзакції, що торкнулися адреси дозволу (`T030`).
    *
@@ -201,9 +210,9 @@ export function createApiSource(client: ApiClient): AllowanceSource {
     },
     requiresWallet: true,
     onNetwork: true,
-    async listAllowances(owner, signal) {
+    async listAllowances(owner, signal, minSlot) {
       if (owner === null) throw new WalletRequiredError()
-      const response = await client.listAllowances(owner, signal)
+      const response = await client.listAllowances(owner, signal, minSlot)
       /*
        * Момент відліку — коли мережу **прочитали**, а не коли малюємо. Від нього
        * залежить `periodElapsed`, і брати тут `new Date()` означало б, що список,
@@ -217,9 +226,9 @@ export function createApiSource(client: ApiClient): AllowanceSource {
         unreadable: response.unreadable,
       }
     },
-    async getAllowance(id, signal) {
+    async getAllowance(id, signal, minSlot) {
       try {
-        const card = await client.getAllowance(id, signal)
+        const card = await client.getAllowance(id, signal, minSlot)
         // Той самий годинник, що й у списку: `periodElapsed` судить прочитане
         // моментом читання, а не моментом малювання.
         return detailFromAllowance(card, new Date(card.syncedAt))

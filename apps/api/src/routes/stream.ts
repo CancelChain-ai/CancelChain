@@ -113,7 +113,9 @@ export function streamRoute(deps: StreamDeps): Hono<AppEnv> {
             }
           }
           if (closed) break
-          if (!(await nextWake())) await stream.write(': ping\n\n')
+          // A named event, not a comment: `EventSource` never shows comments, and
+          // the browser has to see the pulse to tell a quiet stream from a dead one.
+          if (!(await nextWake())) outbox.push({ type: 'ping' })
         }
       } finally {
         unsubscribe()

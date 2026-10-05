@@ -7,6 +7,10 @@ import type {
   Slot,
 } from '@solana/kit'
 import {
+  isSolanaError,
+  SOLANA_ERROR__JSON_RPC__SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED,
+} from '@solana/kit'
+import {
   AccountDiscriminator,
   DELEGATOR_OFFSET,
   getPlanDecoder,
@@ -50,6 +54,7 @@ type ProgramAccountsConfig = {
   encoding: 'base64'
   withContext: true
   commitment?: Commitment
+  minContextSlot?: Slot
   filters?: readonly ProgramAccountsFilter[]
 }
 
@@ -72,7 +77,7 @@ export type ProgramAccountsRpc = {
   }
   getMultipleAccounts(
     addresses: readonly Address[],
-    config: { encoding: 'base64'; commitment?: Commitment },
+    config: { encoding: 'base64'; commitment?: Commitment; minContextSlot?: Slot },
   ): {
     send(): Promise<{ context: { slot: Slot }; value: readonly (Base64AccountInfo | null)[] }>
   }
@@ -143,6 +148,8 @@ export type ReadAllowancesOptions = {
   /** Момент, відносно якого рахується вичерпаність. За замовчуванням — зараз. */
   now?: Date
   commitment?: Commitment
+  /** See `ReadConfig.minContextSlot`. */
+  minContextSlot?: number
   /**
    * Запасний прохід по **всіх** планах програми, коли підписку не вдалося
    * пов'язати з планом за прямим посиланням. Дорогий (на devnet це сотні
@@ -153,6 +160,64 @@ export type ReadAllowancesOptions = {
 }
 
 type PlanAccount = { address: Address; plan: Plan }
+
+/**
+ * How fresh one read has to be, applied to every request it makes.
+ *
+ * `minContextSlot` (`T042a`): no answer from a slot older than this — the state
+ * before a change the caller already knows about. It covers the authorities and
+ * plans as well as the permissions: an authority closed in that change decides
+ * the permission's status as much as the permission itself.
+ *
+ * Every answer's `context.slot` is checked here (`ensureFloor`), and that check
+ * is what holds. The parameter goes to the node only on `getMultipleAccounts`,
+ * where a lagging node answers the standard `-32016`. On `getProgramAccounts`
+ * the public devnet node answers `-32000 RPC_SLOT_BEHIND_MIN_CONTEXT_SLOT`
+ * instead (seen on 2026-10-05), and kit keeps neither the message nor any data
+ * of a `-32000` — it could not be told apart from any other server error.
+ */
+type ReadConfig = { commitment: Commitment | undefined; minContextSlot: Slot | undefined }
+
+function readConfig(options: { commitment?: Commitment; minContextSlot?: number }): ReadConfig {
+  return {
+    commitment: options.commitment,
+    minContextSlot:
+      options.minContextSlot === undefined ? undefined : (BigInt(options.minContextSlot) as Slot),
+  }
+}
+
+function rpcConfig(config: ReadConfig): { commitment?: Commitment; minContextSlot?: Slot } {
+  return {
+    ...(config.commitment === undefined ? {} : { commitment: config.commitment }),
+    ...(config.minContextSlot === undefined ? {} : { minContextSlot: config.minContextSlot }),
+  }
+}
+
+/** The node answered from before the slot the read was asked to start from. */
+export class SlotBehindError extends Error {
+  constructor(
+    readonly slot: Slot,
+    readonly minContextSlot: Slot,
+  ) {
+    super(`the node answered from slot ${slot}, older than the required ${minContextSlot}`)
+    this.name = 'SlotBehindError'
+  }
+}
+
+/** Throws when an answer is older than the read allows — a provider may ignore the parameter. */
+function ensureFloor(slot: Slot, config: ReadConfig): void {
+  if (config.minContextSlot !== undefined && slot < config.minContextSlot) {
+    throw new SlotBehindError(slot, config.minContextSlot)
+  }
+}
+
+/** The node is behind the slot the read was asked to start from. Worth a retry, not a failure. */
+export function isMinContextSlotNotReached(error: unknown): boolean {
+  return (
+    error instanceof SlotBehindError ||
+    isSolanaError(error, SOLANA_ERROR__JSON_RPC__SERVER_ERROR_MIN_CONTEXT_SLOT_NOT_REACHED)
+  )
+}
 
 /**
  * Слот у число. `slotSchema` тримає слот числом (`packages/shared`), і межу
@@ -204,17 +269,15 @@ function toPlanAccount(raw: RawProgramAccount, programAddress: Address): PlanAcc
 async function readAccounts(
   reader: AllowanceReader,
   addresses: readonly Address[],
-  commitment: Commitment | undefined,
+  config: ReadConfig,
 ): Promise<{ slot: Slot; accounts: RawProgramAccount[] }> {
   let slot = 0n as Slot
   const accounts: RawProgramAccount[] = []
   for (const batch of chunk(addresses, MAX_ACCOUNTS_PER_REQUEST)) {
     const response = await reader.rpc
-      .getMultipleAccounts(batch, {
-        encoding: 'base64',
-        ...(commitment === undefined ? {} : { commitment }),
-      })
+      .getMultipleAccounts(batch, { encoding: 'base64', ...rpcConfig(config) })
       .send()
+    ensureFloor(response.context.slot, config)
     slot = response.context.slot
     response.value.forEach((account, index) => {
       const pubkey = batch[index]
@@ -229,9 +292,9 @@ async function readAccounts(
 async function readPlansByAddress(
   reader: AllowanceReader,
   addresses: readonly Address[],
-  commitment: Commitment | undefined,
+  config: ReadConfig,
 ): Promise<PlanAccount[]> {
-  const { accounts } = await readAccounts(reader, addresses, commitment)
+  const { accounts } = await readAccounts(reader, addresses, config)
   const plans: PlanAccount[] = []
   for (const raw of accounts) {
     const plan = toPlanAccount(raw, reader.programAddress)
@@ -294,7 +357,7 @@ type SubscriptionAccount = {
 async function resolvePlanRefs(
   reader: AllowanceReader,
   subscriptions: readonly SubscriptionAccount[],
-  options: { fullPlanScan: boolean; commitment: Commitment | undefined },
+  options: { fullPlanScan: boolean; config: ReadConfig },
 ): Promise<Map<Address, PlanRef>> {
   const refs = new Map<Address, PlanRef>()
   if (subscriptions.length === 0) return refs
@@ -302,11 +365,7 @@ async function resolvePlanRefs(
   const subscribers = [...new Set(subscriptions.map((entry) => entry.subscriber))]
   const candidates = [...new Set(subscriptions.map((entry) => entry.delegatee))]
 
-  await indexPlans(
-    refs,
-    await readPlansByAddress(reader, candidates, options.commitment),
-    subscribers,
-  )
+  await indexPlans(refs, await readPlansByAddress(reader, candidates, options.config), subscribers)
 
   const missing = subscriptions.some((entry) => !refs.has(entry.address))
   if (missing && options.fullPlanScan) {
@@ -370,12 +429,12 @@ async function authorityStates(
   reader: AllowanceReader,
   decoded: readonly DecodedDelegation[],
   planRefs: ReadonlyMap<Address, PlanRef>,
-  commitment: Commitment | undefined,
+  config: ReadConfig,
 ): Promise<Map<Address, AuthorityState>> {
   const byPermission = await authorityAddresses(decoded, planRefs)
   const states = new Map<Address, AuthorityState>()
   if (byPermission.size === 0) return states
-  const { accounts } = await readAccounts(reader, [...new Set(byPermission.values())], commitment)
+  const { accounts } = await readAccounts(reader, [...new Set(byPermission.values())], config)
   const initIds = new Map<Address, bigint>()
   for (const raw of accounts) {
     if (raw.account.owner !== reader.programAddress) continue
@@ -430,14 +489,17 @@ export async function readAllowances(
   reader: AllowanceReader,
   options: ReadAllowancesOptions,
 ): Promise<AllowanceReadResult> {
+  const config = readConfig(options)
   const { context, value } = await reader.rpc
     .getProgramAccounts(reader.programAddress, {
       encoding: 'base64',
       withContext: true,
-      ...(options.commitment === undefined ? {} : { commitment: options.commitment }),
+      // The floor is checked on the answer, not sent: see `ReadConfig`.
+      ...rpcConfig({ ...config, minContextSlot: undefined }),
       filters: [memcmpFilter(options.owner, DELEGATOR_OFFSET)],
     })
     .send()
+  ensureFloor(context.slot, config)
 
   const slot = slotToNumber(context.slot)
   const syncedAt = (options.now ?? new Date()).toISOString()
@@ -456,10 +518,10 @@ export async function readAllowances(
 
   const planRefs = await resolvePlanRefs(reader, subscriptions, {
     fullPlanScan: options.fullPlanScan ?? true,
-    commitment: options.commitment,
+    config,
   })
 
-  const authorities = await authorityStates(reader, decoded, planRefs, options.commitment)
+  const authorities = await authorityStates(reader, decoded, planRefs, config)
   const { allowances, unreadable } = convert(reader, decoded, planRefs, authorities, {
     slot,
     syncedAt,
@@ -516,6 +578,8 @@ export type ReadAllowanceOptions = {
   pda: Address
   now?: Date
   commitment?: Commitment
+  /** See `ReadConfig.minContextSlot`. */
+  minContextSlot?: number
   fullPlanScan?: boolean
 }
 
@@ -546,7 +610,8 @@ export async function readAllowance(
   reader: AllowanceReader,
   options: ReadAllowanceOptions,
 ): Promise<AllowanceReadOne> {
-  const { slot: rawSlot, accounts } = await readAccounts(reader, [options.pda], options.commitment)
+  const config = readConfig(options)
+  const { slot: rawSlot, accounts } = await readAccounts(reader, [options.pda], config)
   const slot = slotToNumber(rawSlot)
   const syncedAt = (options.now ?? new Date()).toISOString()
   const raw = accounts[0]
@@ -574,10 +639,10 @@ export async function readAllowance(
       : []
   const planRefs = await resolvePlanRefs(reader, subscriptions, {
     fullPlanScan: options.fullPlanScan ?? true,
-    commitment: options.commitment,
+    config,
   })
 
-  const authorities = await authorityStates(reader, [decoded], planRefs, options.commitment)
+  const authorities = await authorityStates(reader, [decoded], planRefs, config)
   const { allowances, unreadable } = convert(reader, [decoded], planRefs, authorities, {
     slot,
     syncedAt,

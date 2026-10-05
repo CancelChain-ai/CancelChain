@@ -1,8 +1,10 @@
 import type { CancelControls, CancelState } from '../chain/revoke'
 import { stepLabel } from '../chain/revoke'
 import AllowanceCard, { type CancelNotice, NOTICE_STYLES } from '../components/AllowanceCard'
+import { LiveStatus } from '../components/LiveStatus'
 import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
+import type { LiveState } from '../lib/useStream'
 import {
   type AllowanceView,
   allowedTotal,
@@ -47,6 +49,8 @@ interface SubscriptionsProps {
    * дозволами кнопка, яка нічого не підписує, гірша за її відсутність.
    */
   cancel?: CancelControls | undefined
+  /** Whether the list keeps itself current (`T042a`). Absent — nothing streams here. */
+  live?: LiveState | undefined
 }
 
 /**
@@ -139,10 +143,12 @@ const Header = ({
   list,
   walletLabel,
   onNetwork,
+  live,
 }: {
   list: AllowanceList
   walletLabel: string | null
   onNetwork: boolean
+  live: LiveState
 }) => {
   const total = allowedTotal(list.items)
   const period = periodClause(list.items)
@@ -171,6 +177,7 @@ const Header = ({
           {onNetwork ? 'Read from the network at ' : 'Invented data, generated at '}
           {formatClock(new Date(list.syncedAt))}
         </span>
+        <LiveStatus state={live} className="max-w-[320px] sm:text-right" />
         {list.stale && (
           <span className="text-[12px] text-amber">
             This is a stored copy, older than we are willing to vouch for.
@@ -370,7 +377,14 @@ const EmptyList = ({
   )
 }
 
-const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, cancel }: SubscriptionsProps) => {
+const Subscriptions = ({
+  state,
+  walletLabel,
+  onNetwork,
+  onOpen,
+  cancel,
+  live = 'off',
+}: SubscriptionsProps) => {
   if (state.status === 'no-wallet') {
     return (
       <Notice>
@@ -399,7 +413,7 @@ const Subscriptions = ({ state, walletLabel, onNetwork, onOpen, cancel }: Subscr
 
   return (
     <div>
-      <Header list={list} walletLabel={walletLabel} onNetwork={onNetwork} />
+      <Header list={list} walletLabel={walletLabel} onNetwork={onNetwork} live={live} />
 
       {state.refreshFailed !== null && (
         <p className="mt-6 text-[12px] leading-relaxed text-rust">

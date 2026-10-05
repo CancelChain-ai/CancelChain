@@ -1,8 +1,10 @@
 import { shortenAddress } from '../chain/wallet'
 import ConsentStrip from '../components/ConsentStrip'
+import { LiveStatus } from '../components/LiveStatus'
 import type { AllowanceState } from '../lib/useAllowance'
 import type { FeedFreshness, FeedState, OlderState } from '../lib/useFeed'
 import type { HistoryState } from '../lib/useHistory'
+import type { LiveState } from '../lib/useStream'
 import {
   type ActivityRow,
   type AddressHistoryView,
@@ -68,6 +70,8 @@ interface SubscriptionProps {
   onCancelNow?: ((id: string) => void) | undefined
   onResume?: ((id: string) => void) | undefined
   onKeep?: ((id: string) => void) | undefined
+  /** Whether the card and its feed keep themselves current (`T042a`). Absent — nothing streams. */
+  live?: LiveState | undefined
 }
 
 type TagTone = 'quiet' | 'outline' | 'amber' | 'grey'
@@ -547,6 +551,7 @@ const Card = ({
   feed,
   explorerUrl,
   explorerAddressUrl,
+  live = 'off',
 }: {
   detail: AllowanceDetailView
   refreshFailed: string | null
@@ -670,6 +675,7 @@ const Card = ({
       </dl>
 
       <ReadAt detail={detail} />
+      <LiveStatus state={live} className="mt-1 block" />
 
       <div className="mt-10 border-t border-hairline">
         {secondaryRows(detail).map((row) => (

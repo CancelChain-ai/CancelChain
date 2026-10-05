@@ -42,8 +42,24 @@ export const latestBlockhashResponseSchema = z.object({
 
 export type LatestBlockhashResponse = z.infer<typeof latestBlockhashResponseSchema>
 
+/**
+ * The oldest slot a read may answer from (`T042a`). The client sends it after
+ * `allowance.updated`: the stored copy behind that message is at `lastSlot`, and
+ * a node still behind it would answer with the state before the change — which
+ * no later message corrects. The API hands it to the node as `minContextSlot`,
+ * so a lagging node refuses instead of answering from the past.
+ */
+export const minSlotSchema = z
+  .string()
+  // Digits only: `z.coerce` would read an empty `?minSlot=` as slot 0.
+  .regex(/^(0|[1-9][0-9]*)$/)
+  .transform(Number)
+  .pipe(slotSchema.max(Number.MAX_SAFE_INTEGER))
+  .optional()
+
 export const listAllowancesQuerySchema = z.object({
   owner: addressSchema,
+  minSlot: minSlotSchema,
 })
 
 /**
@@ -112,6 +128,10 @@ export const listAllowancesResponseSchema = z.object({
 
 export const getAllowanceParamsSchema = z.object({
   pda: addressSchema,
+})
+
+export const getAllowanceQuerySchema = z.object({
+  minSlot: minSlotSchema,
 })
 
 /**
@@ -233,9 +253,14 @@ export const streamQuerySchema = z.object({
  * `resync` (сервер міг пропустити зміни, поки не слухав базу) кажуть одне:
  * перечитай усе. Повтору пропущеного за `Last-Event-ID` немає навмисно — він
  * покрив би лише події, а не знімки дозволів, і обіцяв би повноту, якої немає.
+ *
+ * `ping` — the heartbeat, a named event rather than an SSE comment (`T042a`):
+ * `EventSource` never surfaces comments, so a comment keeps proxies awake but
+ * cannot tell the browser that the stream is still alive.
  */
 export const streamMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready') }),
+  z.object({ type: z.literal('ping') }),
   z.object({ type: z.literal('resync') }),
   z.object({
     type: z.literal('allowance.updated'),
@@ -251,8 +276,8 @@ export const streamMessageSchema = z.discriminatedUnion('type', [
 export type StreamMessage = z.infer<typeof streamMessageSchema>
 
 /**
- * A comment line goes down an idle stream this often, so proxies on the way do
- * not close it as dead and a client can tell a quiet stream from a broken one.
+ * A `ping` goes down an idle stream this often, so proxies on the way do not
+ * close it as dead and a client can tell a quiet stream from a broken one.
  */
 export const STREAM_HEARTBEAT_MS = 20_000
 

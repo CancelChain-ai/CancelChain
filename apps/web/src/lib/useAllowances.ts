@@ -1,6 +1,7 @@
 import type { Address } from '@cancelchain/shared'
 import { useQuery } from '@tanstack/react-query'
 import { describeFailure } from './api.js'
+import { slotFloors } from './slotFloors.js'
 import { type AllowanceList, source } from './source.js'
 
 /**
@@ -39,8 +40,8 @@ export function allowancesKey(owner: Address | null, revision: number): readonly
 /**
  * Свіжість. Стан мережі має пріоритет над сховищем, тож список не тримається
  * довго: `staleTime` нульовий, і повернення на вкладку перечитує його. Своєї
- * періодичної перечитки тут немає навмисно — її місце займе SSE (`T042`), а
- * до нього зайвий полінг лише швидше з'їдає квоту публічного вузла.
+ * періодичної перечитки тут немає навмисно: її місце займає потік (`useStream`,
+ * `T042a`), а полінг лише швидше з'їдає квоту публічного вузла.
  */
 const RETRY_ATTEMPTS = 1
 
@@ -49,7 +50,9 @@ export function useAllowances(owner: Address | null, revision = 0): AllowancesSt
 
   const query = useQuery({
     queryKey: allowancesKey(owner, revision),
-    queryFn: ({ signal }) => source.listAllowances(owner, signal),
+    // The floor is read when the request goes out, not when the key is built (`slotFloors.ts`).
+    queryFn: ({ signal }) =>
+      source.listAllowances(owner, signal, owner === null ? undefined : slotFloors.list(owner)),
     enabled: !needsWallet,
     staleTime: 0,
     retry: RETRY_ATTEMPTS,

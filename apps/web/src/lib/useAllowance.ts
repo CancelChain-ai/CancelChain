@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { describeFailure } from './api.js'
+import { slotFloors } from './slotFloors.js'
 import { source } from './source.js'
 import type { AllowanceDetailView } from './view.js'
 
@@ -43,7 +44,7 @@ export function useAllowance(id: string | null, revision = 0): AllowanceState {
     queryFn: ({ signal }) =>
       // `enabled` нижче не пускає сюди `null`, але тип цього не знає, і
       // мовчазний `!` заборонений: `null` тут означав би запит ні про що.
-      id === null ? Promise.resolve(null) : source.getAllowance(id, signal),
+      id === null ? Promise.resolve(null) : source.getAllowance(id, signal, slotFloors.card(id)),
     enabled: id !== null,
     staleTime: 0,
     retry: RETRY_ATTEMPTS,

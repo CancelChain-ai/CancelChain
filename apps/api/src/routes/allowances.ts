@@ -1,11 +1,18 @@
-import type { AllowanceReadOne, AllowanceReadResult, ReadAllowance } from '@cancelchain/chain'
+import {
+  type AllowanceReadOne,
+  type AllowanceReadResult,
+  isMinContextSlotNotReached,
+  type ReadAllowance,
+} from '@cancelchain/chain'
 import type { Address, Allowance, AllowanceStatus } from '@cancelchain/shared'
 import {
   getAllowanceParamsSchema,
+  getAllowanceQuerySchema,
   getAllowanceResponseSchema,
   listAllowancesQuerySchema,
   listAllowancesResponseSchema,
 } from '@cancelchain/shared'
+import type { Context } from 'hono'
 import { Hono } from 'hono'
 import type { z } from 'zod'
 import { fail } from '../errors.js'
@@ -31,9 +38,12 @@ export type AllowancesDeps = {
    * Читання дозволів гаманця. Функцією, а не клієнтом мережі: інакше жоден тест
    * маршруту не обійшовся б без RPC, а перевіряти тут треба форму відповіді.
    */
-  list: (owner: Address) => Promise<AllowanceReadResult>
-  /** Один дозвіл із мережі — звірка перед показом картки й перед дією (`FR-024`). */
-  get: (pda: Address) => Promise<AllowanceReadOne>
+  list: (owner: Address, minSlot: number | undefined) => Promise<AllowanceReadResult>
+  /**
+   * Один дозвіл із мережі — звірка перед показом картки й перед дією (`FR-024`).
+   * `minSlot` — see `readAtLeast`.
+   */
+  get: (pda: Address, minSlot: number | undefined) => Promise<AllowanceReadOne>
   /**
    * Збережений стан дозволу або `null`. До індексатора (`T038`) таблиця порожня
    * і звіряти нема з чим — але звірка від цього не стає заглушкою: `null` тут
@@ -46,6 +56,57 @@ export type AllowancesDeps = {
    * мережі вже нічого, а позначка на картці потрібна однаково.
    */
   settlementMint: Address
+  /** How long a read waits for a node behind `minSlot`. Defaults to `BEHIND_RETRY`. */
+  behindRetry?: BehindRetry
+}
+
+export type BehindRetry = {
+  attempts: number
+  delayMs: number
+  sleep?: (ms: number) => Promise<void>
+}
+
+/** About two seconds: a slot is ~400 ms, and a node more than a few behind is not catching up now. */
+export const BEHIND_RETRY: BehindRetry = { attempts: 5, delayMs: 400 }
+
+const sleepFor = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+const BEHIND = Symbol('behind')
+
+/**
+ * A read that may not answer from before `minSlot` (`T042a`).
+ *
+ * The client sends `minSlot` after `allowance.updated`: the stored copy is
+ * already at that slot, and a node behind it would answer with the state before
+ * the change — a cancelled permission still active, with no later message to
+ * correct it (`SC-009`). The node refuses such a read (`minContextSlot`); a
+ * refusal here is waited out, a few slots at most, and past that the route
+ * names it instead of answering from the past. Any other failure is not ours to
+ * retry and goes up as before.
+ */
+async function readAtLeast<T>(
+  read: () => Promise<T>,
+  minSlot: number | undefined,
+  retry: BehindRetry,
+): Promise<T | typeof BEHIND> {
+  const sleep = retry.sleep ?? sleepFor
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await read()
+    } catch (error) {
+      if (minSlot === undefined || !isMinContextSlotNotReached(error)) throw error
+      if (attempt >= retry.attempts) return BEHIND
+      await sleep(retry.delayMs)
+    }
+  }
+}
+
+function failBehind(c: Context<AppEnv>, minSlot: number | undefined) {
+  c.get('logger')?.warn({ minSlot }, 'network node stayed behind the requested slot')
+  return fail(c, 'INTERNAL', `the network node has not reached slot ${minSlot} yet`, {
+    reason: 'node_behind',
+    minSlot,
+  })
 }
 
 export function allowancesRoute(deps: AllowancesDeps): Hono<AppEnv> {
@@ -53,8 +114,13 @@ export function allowancesRoute(deps: AllowancesDeps): Hono<AppEnv> {
     '/v1/allowances',
     validate('query', listAllowancesQuerySchema),
     async (c) => {
-      const { owner } = c.req.valid('query')
-      const result = await deps.list(owner)
+      const { owner, minSlot } = c.req.valid('query')
+      const result = await readAtLeast(
+        () => deps.list(owner, minSlot),
+        minSlot,
+        deps.behindRetry ?? BEHIND_RETRY,
+      )
+      if (result === BEHIND) return failBehind(c, minSlot)
 
       const logger = c.get('logger')
       for (const entry of result.unreadable) {
@@ -193,8 +259,10 @@ export function allowanceRoute(deps: AllowancesDeps): Hono<AppEnv> {
   return new Hono<AppEnv>().get(
     '/v1/allowances/:pda',
     validate('param', getAllowanceParamsSchema),
+    validate('query', getAllowanceQuerySchema),
     async (c) => {
       const { pda } = c.req.valid('param')
+      const { minSlot } = c.req.valid('query')
       /*
        * Сховище падає — картка не падає. Правда про дозвіл лежить у мережі
        * (`FR-025`), і недосяжний кеш може забрати лише прапорець `diverged`,
@@ -202,12 +270,14 @@ export function allowanceRoute(deps: AllowancesDeps): Hono<AppEnv> {
        * показувати нічого, і збережений стан тут не заміна.
        */
       const [chain, cached] = await Promise.all([
-        deps.get(pda),
+        readAtLeast(() => deps.get(pda, minSlot), minSlot, deps.behindRetry ?? BEHIND_RETRY),
         deps.cached(pda).catch((error: unknown) => {
           c.get('logger')?.error({ err: error, pda }, 'cached allowance unreadable')
           return null
         }),
       ])
+
+      if (chain === BEHIND) return failBehind(c, minSlot)
 
       if (chain.unreadable !== null) {
         /*
