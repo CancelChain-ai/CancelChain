@@ -65,11 +65,21 @@ function inU64(column: unknown) {
 const slot = (name: string) => bigint(name, { mode: 'number' })
 const moment = (name: string) => timestamp(name, { withTimezone: true, mode: 'string' })
 
+/**
+ * Every table has row-level security on and no policy at all (`T046`). Supabase
+ * serves the `public` schema through its Data API to anyone holding the
+ * project's anon key; with RLS on and nothing allowed, `anon` and
+ * `authenticated` read and write nothing. This service connects as `postgres`,
+ * the tables' owner, and an owner is not subject to its own table's RLS — so the
+ * application sees no difference. A new table without `.enableRLS()` fails
+ * `schema.test.ts`.
+ */
+
 export const merchants = pgTable('merchants', {
   address: text('address').primaryKey(),
   displayName: text('display_name').notNull(),
   createdAt: moment('created_at').notNull().defaultNow(),
-})
+}).enableRLS()
 
 export const plans = pgTable(
   'plans',
@@ -92,7 +102,7 @@ export const plans = pgTable(
     check('plans_plan_id_u64', inU64(table.planId)),
     check('plans_amount_u64', inU64(table.amount)),
   ],
-)
+).enableRLS()
 
 export const allowances = pgTable(
   'allowances',
@@ -150,7 +160,7 @@ export const allowances = pgTable(
     // Свідомо НЕ перевіряємо spent_in_period <= cap_amount: розбіжний стан
     // мережі має дійти до екрана й бути показаним (`FR-025`), а не впертися в БД.
   ],
-)
+).enableRLS()
 
 export const events = pgTable(
   'events',
@@ -220,7 +230,7 @@ export const events = pgTable(
       sql`(${table.kind} = 'cancelled') = (${table.chargesStopAt} is not null)`,
     ),
   ],
-)
+).enableRLS()
 
 /**
  * Підписка на push прив'язана до браузера, а не до особи (`FR-018`): адреси чи
@@ -243,7 +253,7 @@ export const pushSubscriptions = pgTable(
     uniqueIndex('push_subscriptions_endpoint_owner_key').on(table.endpoint, table.owner),
     index('push_subscriptions_owner_idx').on(table.owner),
   ],
-)
+).enableRLS()
 
 export const PUSH_KINDS = ['upcoming', 'rejected'] as const
 export type PushKind = (typeof PUSH_KINDS)[number]
@@ -271,7 +281,7 @@ export const pushDeliveries = pgTable(
     primaryKey({ columns: [table.subscriptionId, table.kind, table.ref] }),
     check('push_deliveries_kind_check', sql`${table.kind} in (${inList(PUSH_KINDS)})`),
   ],
-)
+).enableRLS()
 
 export const indexerCursor = pgTable('indexer_cursor', {
   name: text('name').primaryKey(),
@@ -279,7 +289,7 @@ export const indexerCursor = pgTable('indexer_cursor', {
   lastSignature: text('last_signature').notNull(),
   lastSlot: slot('last_slot').notNull(),
   updatedAt: moment('updated_at').notNull().defaultNow(),
-})
+}).enableRLS()
 
 /** The log loop's name, for its cursor and its heartbeat. */
 export const PROGRAM_LOGS = 'program-logs'
@@ -297,7 +307,7 @@ export const indexerHeartbeat = pgTable('indexer_heartbeat', {
    */
   name: text('name').primaryKey(),
   aliveAt: moment('alive_at').notNull(),
-})
+}).enableRLS()
 
 /**
  * What the retention step actually did (`T044`, `FR-029`): written by the worker
@@ -326,7 +336,7 @@ export const eventsRetention = pgTable(
       sql`(${table.days} is null) = (${table.keptSince} is null)`,
     ),
   ],
-)
+).enableRLS()
 
 /**
  * Wallets someone is looking at right now (`T045`): the polling fallback reads
@@ -343,7 +353,7 @@ export const watchedWallets = pgTable(
     syncedAt: moment('synced_at'),
   },
   (table) => [index('watched_wallets_active_until_idx').on(table.activeUntil)],
-)
+).enableRLS()
 
 /**
  * How long one sign of life keeps a wallet watched. Three stream pings

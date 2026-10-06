@@ -7,8 +7,10 @@ import {
   EVENT_KINDS,
   REJECT_REASONS,
 } from '@cancelchain/shared'
-import { getTableColumns } from 'drizzle-orm'
+import { getTableColumns, is } from 'drizzle-orm'
+import { getTableConfig, PgTable } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
+import * as schema from './schema.js'
 import {
   allowances,
   events,
@@ -27,6 +29,28 @@ const migrations = readdirSync(migrationsDir)
   .sort()
   .map((name) => readFileSync(join(migrationsDir, name), 'utf8'))
   .join('\n')
+
+describe('row-level security (T046)', () => {
+  // Supabase's Data API serves `public` to anyone with the anon key; a table
+  // with RLS off is readable and writable there. The owner (this service) is
+  // not subject to it, so turning it on costs the application nothing.
+  const exported: unknown[] = Object.values(schema)
+  const tables = exported.filter((value): value is PgTable => is(value, PgTable))
+
+  it('is on for every table in the schema', () => {
+    expect(tables.length).toBeGreaterThanOrEqual(10)
+    const off = tables.map(getTableConfig).filter((table) => !table.enableRLS)
+    expect(off.map((table) => table.name)).toEqual([])
+  })
+
+  it('is turned on by a migration for every table a migration creates', () => {
+    const created = [...migrations.matchAll(/CREATE TABLE "([a-z_]+)"/g)].map((match) => match[1])
+    expect(created.length).toBeGreaterThanOrEqual(10)
+    for (const table of created) {
+      expect(migrations, table).toContain(`ALTER TABLE "${table}" ENABLE ROW LEVEL SECURITY`)
+    }
+  })
+})
 
 describe('migration', () => {
   it('exists — the schema without it is a file nobody ever ran', () => {

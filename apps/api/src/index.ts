@@ -23,6 +23,7 @@ import { apiConfigFromEnv, listenDatabaseUrl, merchantAuthConfig } from './env.j
 import { feedSyncedAt, heartbeatAt, readEvent, readFeed, readRetention } from './feed.js'
 import { startListener } from './listen.js'
 import { createLogger } from './logger.js'
+import { migrateDatabase } from './migrate.js'
 import { hasPushSubscription, removePushSubscriptions, savePushSubscription } from './push.js'
 import type { PushDeps } from './routes/push.js'
 import { createStreamHub } from './stream.js'
@@ -90,6 +91,12 @@ async function main(): Promise<void> {
   // Throws at start too: a stream that never hears the database looks exactly
   // like a quiet wallet (`T042`).
   const listenUrl = listenDatabaseUrl(config)
+  // Before anything reads or writes (`T046`): the indexer and the routes below
+  // expect the schema of this commit, not of the previous deployment.
+  if (config.migrateOnStart) {
+    const migrated = await migrateDatabase(listenUrl)
+    logger.info(migrated, 'database migrated')
+  }
   const database = createDb(config)
   // Throws on a half-set VAPID trio; none at all is push off (`T043`, `FR-027`).
   const vapid = vapidFromEnv(process.env)
@@ -239,7 +246,7 @@ async function main(): Promise<void> {
     logger,
   })
 
-  // Railway надсилає SIGTERM при перевикатці. Без цього пул до пулера лишається
+  // Render надсилає SIGTERM при перевикатці. Без цього пул до пулера лишається
   // відкритим до таймауту, а конекшенів на free tier усього два.
   let stopping = false
   const shutdown = (code: number) => {

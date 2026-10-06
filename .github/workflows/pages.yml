@@ -1,4 +1,8 @@
-# Deploys apps/web to GitHub Pages on every push to main.
+# Deploys the site to GitHub Pages on every push to main, as one artifact:
+#   https://cancelchain-ai.github.io/CancelChain/       apps/landing — for now a
+#                                                     redirect into app/ (T061
+#                                                     puts the landing page here)
+#   https://cancelchain-ai.github.io/CancelChain/app/   apps/web, the application
 #
 # Pages serves static files only. The web app reads its data from the API
 # (apps/api), which has to be hosted elsewhere and named in the repository
@@ -10,10 +14,16 @@
 #   API_URL          https://<api host>            required unless DATA_SOURCE=mock
 #   DATA_SOURCE      api | mock                    default: api
 #   SOLANA_CLUSTER   devnet | testnet | localnet   default: devnet
-#   PAGES_BASE_PATH  /                             only with a custom domain;
-#                                                  default: /<repository name>/
+#   PAGES_BASE_PATH  /app/                         only with a custom domain (the
+#                                                  application's base; the landing
+#                                                  then takes the domain's root);
+#                                                  default: /<repository name>/app/
 #
 # Enable once: Settings → Pages → Build and deployment → Source: GitHub Actions.
+#
+# The application keeps its state in the query string, not in the path, so a
+# deep link is always app/?…, never a path Pages does not have — no 404.html
+# shell is needed.
 
 name: Deploy to GitHub Pages
 
@@ -44,7 +54,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # The version render.yaml runs the API on, and the local one.
+          node-version: 26
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -62,17 +73,23 @@ jobs:
 
       - name: Build apps/web
         env:
-          BASE_PATH: ${{ vars.PAGES_BASE_PATH || format('/{0}/', github.event.repository.name) }}
+          BASE_PATH: ${{ vars.PAGES_BASE_PATH || format('/{0}/app/', github.event.repository.name) }}
           VITE_API_URL: ${{ env.API_URL }}
           VITE_DATA_SOURCE: ${{ env.DATA_SOURCE }}
           VITE_SOLANA_CLUSTER: ${{ vars.SOLANA_CLUSTER || 'devnet' }}
         run: pnpm --filter @cancelchain/web build
 
+      - name: Assemble the site
+        run: |
+          mkdir -p site
+          cp -r apps/landing/. site/
+          cp -r apps/web/dist site/app
+
       - uses: actions/configure-pages@v5
 
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: apps/web/dist
+          path: site
 
   deploy:
     needs: build

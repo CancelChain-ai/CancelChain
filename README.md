@@ -75,9 +75,10 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   its heartbeat is fresh; the card does not show it yet and still lists the address's
   transactions. A permission closed before the indexer first saw it gets no history:
   there is nothing left on chain to describe it.
-- **Nothing is hosted.** Everything runs on a laptop. The intended host is one free Render
-  web service with the indexer inside the API process (`RUN_INDEXER=true`), woken every
-  five minutes by an uptime monitor on `HEAD /health`; that deployment does not exist yet.
+- **The hosting is written down, not yet running.** `render.yaml` describes one free
+  Render web service with the indexer inside the API process (`RUN_INDEXER=true`), woken
+  every five minutes by an uptime monitor on `HEAD /health`; the page on GitHub Pages
+  still shows invented data until that service exists — see *Hosting*.
 - **The feed keeps 90 days.** Older events are deleted from our store once a day
   (`EVENTS_RETENTION_DAYS`, never fewer than 90); the card names that depth and, where a
   permission's history is cut, the date of the cut with a link to the full trail on the
@@ -172,15 +173,35 @@ measurement. The tools refuse to run against `mainnet-beta`.
 
 ## Hosting
 
-`apps/web` is a static bundle and deploys to **GitHub Pages** from
-`.github/workflows/pages.yml` on every push to `main`: the gate runs first, then the
-build, then the deploy. Pages serves files only, so the API has to live elsewhere and be
-named in the repository variable `API_URL`; the API, in turn, must list the site's origin
-in `CORS_ORIGINS`. A build in `api` mode with no `API_URL` is refused, not deployed. To
-publish the invented-data demo on purpose, set `DATA_SOURCE=mock`.
+Three free pieces: Supabase for Postgres, one Render web service for the API and the
+indexer, GitHub Pages for the page.
 
-One-time setup: *Settings → Pages → Source: GitHub Actions*. The page is served under
-`/<repository name>/` unless `PAGES_BASE_PATH` says otherwise (a custom domain wants `/`).
+**Database — Supabase.** Two connection strings to the same project, and they are not
+interchangeable. `DATABASE_URL` is the transaction pooler (port 6543): every query of the
+API and the indexer. `DATABASE_LISTEN_URL` is the session pooler (port 5432, same host and
+user): the live stream's `LISTEN`, which hears nothing through the transaction pooler, and
+the schema migrations. Both connect as `postgres`, the owner of the tables. Every table
+has row-level security on with no policy, so Supabase's Data API, which serves the
+`public` schema to anyone holding the project's anon key, reads and writes nothing; the
+owner is not subject to it, and the application sees no difference.
+
+**API and indexer — Render** (`render.yaml`, a Blueprint). Render's free instance is a
+web service only, so the indexer runs inside the API process. With
+`MIGRATE_ON_START=true` the API applies every pending migration before the indexer
+starts and before the port opens, under an advisory lock; a failed migration stops the
+start with the reason in the log. The free plan has no pre-deploy step, so the schema
+travels with each push. The instance sleeps after 15 minutes without a request; an
+external monitor sending `HEAD /health` every five minutes keeps it up. A GitHub Actions
+schedule cannot: GitHub thins frequent schedules out to one run every few hours.
+
+**Page — GitHub Pages** (`.github/workflows/pages.yml`, on every push to `main`: the gate,
+then the build, then the deploy). The application is served from `/<repository>/app/`;
+the site root forwards there, carrying `?plan=` and `?allowance=` with it, until a
+landing page takes its place. Pages serves files only, so the API is named in the
+repository variable `API_URL`, and the API lists the site's origin in `CORS_ORIGINS`. A
+build in `api` mode with no `API_URL` is refused, not deployed; `DATA_SOURCE=mock`
+publishes the invented-data demo on purpose. With a custom domain, `PAGES_BASE_PATH`
+becomes `/app/`.
 
 ## Rules the code keeps
 

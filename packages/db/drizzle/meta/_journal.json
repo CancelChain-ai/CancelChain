@@ -64,6 +64,13 @@
       "when": 1791287263347,
       "tag": "0008_wallet_polling",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791312884771,
+      "tag": "0009_row_level_security",
+      "breakpoints": true
     }
   ]
 }

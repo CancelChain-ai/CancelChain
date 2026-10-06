@@ -1,0 +1,41 @@
+<!doctype html>
+<!--
+  The site root on GitHub Pages (T046). The application lives in app/; until the
+  landing page (T061) takes this place, the root only forwards there.
+
+  Query and fragment travel along: merchants' subscribe links (?plan=) and
+  notification links (?allowance=) were handed out while the application sat at
+  the root, and they must keep opening the right screen. The landing page that
+  replaces this file has to keep forwarding addresses that carry them.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>CancelChain</title>
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23F7F5F1'/%3E%3Crect x='2.5' y='4.5' width='11' height='7' rx='1' fill='none' stroke='%2316150F'/%3E%3Cpath d='M3 13 L13 3' stroke='%23A33A28' stroke-width='2'/%3E%3C/svg%3E"
+    />
+    <script>
+      location.replace(`app/${location.search}${location.hash}`)
+    </script>
+    <noscript><meta http-equiv="refresh" content="0; url=app/" /></noscript>
+    <style>
+      body {
+        margin: 0;
+        padding: 48px 16px;
+        background: #f7f5f1;
+        color: #16150f;
+        font: 16px/1.5 system-ui, sans-serif;
+      }
+      a {
+        color: #a33a28;
+      }
+    </style>
+  </head>
+  <body>
+    <p>Opening CancelChain… If nothing happens, <a href="app/">open the app</a>.</p>
+  </body>
+</html>

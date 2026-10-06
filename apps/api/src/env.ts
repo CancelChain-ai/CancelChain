@@ -73,6 +73,13 @@ export const apiConfigSchema = z.object({
    * environment (`EVENTS_RETENTION_DAYS`, `PUSH_UPCOMING_LEAD_HOURS`, …).
    */
   runIndexer: z.boolean().default(false),
+  /**
+   * Apply the schema migrations at start, over the session connection
+   * (`T046`): a free web service has no pre-deploy step to do it in. Off by
+   * default — a local database built by hand has no migration journal, and
+   * the migrator would replay `0000` into existing tables.
+   */
+  migrateOnStart: z.boolean().default(false),
 })
 
 export type ApiConfig = z.infer<typeof apiConfigSchema>
@@ -176,5 +183,6 @@ export function apiConfigFromEnv(env: Record<string, string | undefined>): ApiCo
     jwtSecret: env.JWT_SECRET,
     authDomain: env.AUTH_DOMAIN,
     runIndexer: boolFromEnv(env.RUN_INDEXER),
+    migrateOnStart: boolFromEnv(env.MIGRATE_ON_START),
   })
 }

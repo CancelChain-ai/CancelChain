@@ -62,6 +62,13 @@ describe('apiConfigSchema', () => {
     expect(apiConfigFromEnv({ ...base, RUN_INDEXER: 'true' }).runIndexer).toBe(true)
     expect(apiConfigFromEnv({ ...base, RUN_INDEXER: 'false' }).runIndexer).toBe(false)
   })
+
+  it('migrates at start only when asked to — a hand-built database has no journal (T046)', () => {
+    const base = { DATABASE_URL: POOLED }
+    expect(apiConfigFromEnv(base).migrateOnStart).toBe(false)
+    expect(apiConfigFromEnv({ ...base, MIGRATE_ON_START: 'true' }).migrateOnStart).toBe(true)
+    expect(apiConfigFromEnv({ ...base, MIGRATE_ON_START: 'false' }).migrateOnStart).toBe(false)
+  })
 })
 
 describe('databasePort', () => {
