@@ -1,7 +1,9 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["node"]
+    "types": ["node"],
+    // `perf/` hands callbacks to `page.evaluate`; they run in the browser.
+    "lib": ["ES2023", "DOM"]
   },
-  "include": ["e2e", "fixtures"]
+  "include": ["e2e", "fixtures", "perf"]
 }

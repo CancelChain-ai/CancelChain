@@ -171,6 +171,25 @@ in `tests/e2e/config.ts`; the merchant's own are in `merchant-sim --help` and
 reason**, not failed — a green gate on a machine with no keys must not look like a
 measurement. The tools refuse to run against `mainnet-beta`.
 
+The speed criteria (`SC-003`, `SC-006`, `SC-008`, `SC-009`) are measured against the
+**deployed** stand — Pages, Render, Supabase — on one wallet holding 100 permissions of
+all three kinds. A third keypair owns them (`PERF_OWNER_KEYPAIR_PATH`); `merchant-sim`
+funds it, creates and names the plans, and pulls:
+
+```bash
+pnpm --filter @cancelchain/e2e perf seed    # bring the wallet to exactly 100, wait for the API
+pnpm --filter @cancelchain/e2e perf sc003   # all 100 cards on screen, p95 of 40 first visits
+pnpm --filter @cancelchain/e2e perf sc008   # first screen on WebPageTest 3G, CPU ×4, 375 px
+pnpm --filter @cancelchain/e2e perf sc006   # a refused charge in the open card's feed
+pnpm --filter @cancelchain/e2e perf sc009   # a revocation made elsewhere leaves the open list
+```
+
+They need a keyed RPC node and refuse the public one, whose rate limit would be measured
+instead of the product. Chrome stable runs them (`PERF_CHROME_PATH`); raw samples go to
+`PERF_OUT_DIR`. `sc009` revokes 20 permissions; `seed` grants them back. 3G is a
+packet-level proxy (`tests/perf/shaper.ts`), not DevTools throttling, which delays
+neither handshakes nor the CORS preflight.
+
 ## Hosting
 
 Three free pieces: Supabase for Postgres, one Render web service for the API and the
