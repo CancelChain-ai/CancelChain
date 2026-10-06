@@ -24,8 +24,9 @@ services:
     name: cancelchain-api
     runtime: node
     plan: free
-    # Next to the Supabase project (eu-central-1, Frankfurt): every request the
-    # API answers from the cache crosses this distance at least once.
+    # The Render region closest to the Supabase project (eu-west-1, Ireland;
+    # Render has no Irish region): every request the API answers from the
+    # cache crosses this distance at least once.
     region: frankfurt
     # Not `corepack enable`: the Node 26 image keeps its own pnpm in a read-only
     # /usr/bin, `enable` fails replacing it, and Node 25+ no longer ships
