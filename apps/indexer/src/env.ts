@@ -20,6 +20,15 @@ const indexerEnvSchema = z.object({
     .refine((value) => postgresUrl(value) !== null, 'expected a postgres:// connection string'),
   /** Same opt-in as the API's: the free tier has two direct connections for both services. */
   allowDirectDatabase: flagSchema.default(false),
+  /**
+   * How far ahead a charge due is announced (`T043`); a period shorter than two
+   * of these gets a quarter of itself instead (`upcomingLeadMs`).
+   */
+  pushUpcomingLeadHours: z.coerce
+    .number()
+    .positive()
+    .max(24 * 30)
+    .default(24),
 })
 
 export type IndexerConfig = z.infer<typeof indexerEnvSchema> & { chain: ChainConfig }
@@ -31,6 +40,8 @@ export function indexerConfigFromEnv(env: Record<string, string | undefined>): I
     useWs: env.INDEXER_USE_WS === '' ? undefined : env.INDEXER_USE_WS,
     databaseUrl: env.DATABASE_URL,
     allowDirectDatabase: env.ALLOW_DIRECT_DATABASE === '' ? undefined : env.ALLOW_DIRECT_DATABASE,
+    pushUpcomingLeadHours:
+      env.PUSH_UPCOMING_LEAD_HOURS === '' ? undefined : env.PUSH_UPCOMING_LEAD_HOURS,
   })
   assertPooledDatabaseUrl(own.databaseUrl, own.allowDirectDatabase)
   return { ...own, chain: chainConfigFromEnv(env) }

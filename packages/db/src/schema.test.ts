@@ -9,7 +9,15 @@ import {
 } from '@cancelchain/shared'
 import { getTableColumns } from 'drizzle-orm'
 import { describe, expect, it } from 'vitest'
-import { allowances, events, indexerCursor, merchants, plans, pushSubscriptions } from './schema.js'
+import {
+  allowances,
+  events,
+  indexerCursor,
+  merchants,
+  PUSH_KINDS,
+  plans,
+  pushSubscriptions,
+} from './schema.js'
 import { STREAM_CHANNEL } from './stream.js'
 
 const migrationsDir = join(fileURLToPath(new URL('..', import.meta.url)), 'drizzle')
@@ -34,6 +42,7 @@ describe('migration', () => {
       'push_subscriptions',
       'indexer_cursor',
       'indexer_heartbeat',
+      'push_deliveries',
     ]) {
       expect(migrations, table).toContain(`CREATE TABLE "${table}"`)
     }
@@ -50,12 +59,27 @@ describe('migration', () => {
     expect(migrations).toContain('DROP INDEX "events_signature_allowance_kind_key"')
   })
 
+  it('keys a push subscription by browser and wallet, not by browser alone (T043)', () => {
+    expect(migrations).toContain('DROP INDEX "push_subscriptions_endpoint_key"')
+    expect(migrations).toContain(
+      'CREATE UNIQUE INDEX "push_subscriptions_endpoint_owner_key" ON "push_subscriptions" USING btree ("endpoint","owner")',
+    )
+  })
+
+  it('forgets what was sent to a subscription together with the subscription', () => {
+    expect(migrations).toContain(
+      'FOREIGN KEY ("subscription_id") REFERENCES "public"."push_subscriptions"("id") ON DELETE cascade',
+    )
+    expect(migrations).toContain('PRIMARY KEY("subscription_id","kind","ref")')
+  })
+
   it('carries every value of every finite list into a CHECK', () => {
     for (const value of [
       ...ALLOWANCE_KINDS,
       ...ALLOWANCE_STATUSES,
       ...EVENT_KINDS,
       ...REJECT_REASONS,
+      ...PUSH_KINDS,
     ]) {
       expect(migrations, value).toContain(`'${value}'`)
     }

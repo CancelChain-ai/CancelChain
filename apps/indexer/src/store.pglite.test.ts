@@ -415,6 +415,58 @@ describe('store — the cache row', () => {
   })
 })
 
+describe('store — refresh before a charge-due push (T043)', () => {
+  it('writes what the chain says and names only the permissions it showed open', async () => {
+    const { chain, store } = setup()
+    chain.open(subscription({ spentInPeriod: '0' }))
+    chain.open(recurring())
+    await store.write(
+      synthetic({
+        signature: 'seed',
+        events: [
+          {
+            signature: 'seed',
+            slot: 1n,
+            blockTime: 1n,
+            instructionIndex: 0,
+            position: 0,
+            kind: 'resumed',
+            allowance: SUBSCRIPTION,
+          },
+          {
+            signature: 'seed',
+            slot: 1n,
+            blockTime: 1n,
+            instructionIndex: 0,
+            position: 1,
+            kind: 'resumed',
+            allowance: DELEGATION,
+          },
+        ],
+      }),
+    )
+
+    chain.open(subscription({ spentInPeriod: '9990000' }), 505_600_000)
+    chain.close(DELEGATION, 505_600_000)
+    const open = await store.refresh([SUBSCRIPTION, DELEGATION, SUBSCRIPTION])
+
+    expect([...open]).toEqual([SUBSCRIPTION])
+    const rows = await db.select().from(allowances).orderBy(allowances.pda)
+    expect(rows.find((row) => row.pda === SUBSCRIPTION)).toMatchObject({
+      spentInPeriod: 9_990_000n,
+      lastSlot: 505_600_000,
+    })
+    expect(rows.find((row) => row.pda === DELEGATION)).toMatchObject({ status: 'revoked' })
+  })
+
+  it('does not vouch for an account the chain shows but cannot read as a permission', async () => {
+    const { chain, store } = setup()
+    chain.unreadable(SUBSCRIPTION)
+    expect([...(await store.refresh([SUBSCRIPTION]))]).toEqual([])
+    expect(await store.refresh([])).toEqual(new Set())
+  })
+})
+
 describe('store — events that name no permission', () => {
   it('authority closed: a revoked row for each live permission of that wallet in that mint', async () => {
     const { chain, store } = setup()

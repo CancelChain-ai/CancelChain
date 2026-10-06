@@ -86,6 +86,14 @@ export type Store = {
   backfillReasons(): Promise<BackfillResult>
   /** The indexer is alive and listening right now (`T041`). */
   heartbeat(): Promise<void>
+  /**
+   * Reads permissions from the chain into the cache, outside any transaction
+   * of theirs (`T043`): a charge-due push checks the chain first (`FR-024`),
+   * and what it read is newer than what the cache holds. Answers the
+   * permissions the chain showed open — a closed or unreadable one is not a
+   * permission anyone should be told about.
+   */
+  refresh(pdas: readonly string[]): Promise<Set<string>>
 }
 
 type ChainState =
@@ -340,6 +348,18 @@ export function createStore(options: StoreOptions): Store {
     return result
   }
 
+  async function refresh(pdas: readonly string[]): Promise<Set<string>> {
+    if (pdas.length === 0) return new Set()
+    const states = await chainStates([...new Set(pdas)])
+    await db.transaction(async (tx) => {
+      for (const [pda, state] of states) {
+        if (state.state === 'open') await upsertAllowance(tx, state.allowance, state.slot)
+        if (state.state === 'closed') await markClosed(tx, pda, state.slot, now())
+      }
+    })
+    return new Set([...states].flatMap(([pda, state]) => (state.state === 'open' ? [pda] : [])))
+  }
+
   async function heartbeat(): Promise<void> {
     const aliveAt = now().toISOString()
     await db
@@ -348,7 +368,7 @@ export function createStore(options: StoreOptions): Store {
       .onConflictDoUpdate({ target: indexerHeartbeat.name, set: { aliveAt } })
   }
 
-  return { write, cursor, backfillReasons, heartbeat }
+  return { write, cursor, backfillReasons, heartbeat, refresh }
 }
 
 /** Permissions among `pdas` that carry our pause label: `508` means paused, not cancelled, there. */

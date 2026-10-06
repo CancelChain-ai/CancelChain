@@ -2,8 +2,10 @@ import type { CancelControls, CancelState } from '../chain/revoke'
 import { stepLabel } from '../chain/revoke'
 import AllowanceCard, { type CancelNotice, NOTICE_STYLES } from '../components/AllowanceCard'
 import { LiveStatus } from '../components/LiveStatus'
+import { PushSwitch } from '../components/PushSwitch'
 import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
+import type { PushControls } from '../lib/usePush'
 import type { LiveState } from '../lib/useStream'
 import {
   type AllowanceView,
@@ -51,6 +53,8 @@ interface SubscriptionsProps {
   cancel?: CancelControls | undefined
   /** Whether the list keeps itself current (`T042a`). Absent — nothing streams here. */
   live?: LiveState | undefined
+  /** Notifications in this browser (`T043`). Absent — no switch here. */
+  push?: PushControls | null | undefined
 }
 
 /**
@@ -144,11 +148,13 @@ const Header = ({
   walletLabel,
   onNetwork,
   live,
+  push,
 }: {
   list: AllowanceList
   walletLabel: string | null
   onNetwork: boolean
   live: LiveState
+  push: PushControls | null
 }) => {
   const total = allowedTotal(list.items)
   const period = periodClause(list.items)
@@ -178,6 +184,7 @@ const Header = ({
           {formatClock(new Date(list.syncedAt))}
         </span>
         <LiveStatus state={live} className="max-w-[320px] sm:text-right" />
+        <PushSwitch push={push} className="mt-2 max-w-[320px] sm:text-right" />
         {list.stale && (
           <span className="text-[12px] text-amber">
             This is a stored copy, older than we are willing to vouch for.
@@ -384,6 +391,7 @@ const Subscriptions = ({
   onOpen,
   cancel,
   live = 'off',
+  push = null,
 }: SubscriptionsProps) => {
   if (state.status === 'no-wallet') {
     return (
@@ -413,7 +421,7 @@ const Subscriptions = ({
 
   return (
     <div>
-      <Header list={list} walletLabel={walletLabel} onNetwork={onNetwork} live={live} />
+      <Header list={list} walletLabel={walletLabel} onNetwork={onNetwork} live={live} push={push} />
 
       {state.refreshFailed !== null && (
         <p className="mt-6 text-[12px] leading-relaxed text-rust">

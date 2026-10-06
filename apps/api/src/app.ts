@@ -9,6 +9,7 @@ import { type EventsDeps, eventsRoute } from './routes/events.js'
 import { type HealthDeps, healthRoute } from './routes/health.js'
 import { type MerchantsDeps, merchantPlansRoute, merchantSignInRoute } from './routes/merchants.js'
 import { type PlansDeps, plansRoute } from './routes/plans.js'
+import { type PushDeps, pushRoute } from './routes/push.js'
 import { type SignaturesDeps, signaturesRoute } from './routes/signatures.js'
 import { type StreamDeps, streamRoute } from './routes/stream.js'
 import type { AppEnv } from './types.js'
@@ -23,6 +24,12 @@ export type AppDeps = {
   stream: StreamDeps
   merchants: MerchantsDeps
   plans: PlansDeps
+  /**
+   * Web Push (`T043`). Absent — this installation has no VAPID keys: the page
+   * hears `enabled: false` and offers no switch, and nothing else changes
+   * (`FR-027`).
+   */
+  push?: PushDeps
   rateLimit?: RateLimitOptions
   /**
    * Origin-и браузерів, яким можна читати `/v1` з іншого хоста (сторінка на
@@ -50,7 +57,8 @@ export function createApp(deps: AppDeps) {
         origin: [...deps.corsOrigins],
         // POST — це вхід мерчанта й назва плану (`T035`); `Authorization`
         // без цього переліку браузер у крос-доменний запит просто не покладе.
-        allowMethods: ['GET', 'POST'],
+        // DELETE — a browser stops following a wallet's push (`T043`).
+        allowMethods: ['GET', 'POST', 'DELETE'],
         allowHeaders: ['Content-Type', 'Authorization'],
       }),
     )
@@ -74,6 +82,7 @@ export function createApp(deps: AppDeps) {
     .route('/', merchantSignInRoute(deps.merchants))
     .route('/', merchantPlansRoute(deps.merchants))
     .route('/', plansRoute(deps.plans))
+    .route('/', pushRoute(deps.push))
 }
 
 export type App = ReturnType<typeof createApp>

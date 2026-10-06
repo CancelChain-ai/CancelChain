@@ -10,6 +10,7 @@ import {
   verifyWalletSignature,
 } from '@cancelchain/chain'
 import { plans, STREAM_CHANNEL } from '@cancelchain/db'
+import { createPushSender, vapidFromEnv, welcomeMessage } from '@cancelchain/push'
 import type { Plan } from '@cancelchain/shared'
 import { fromU64, planSchema, toU64 } from '@cancelchain/shared'
 import { serve } from '@hono/node-server'
@@ -21,6 +22,8 @@ import { apiConfigFromEnv, listenDatabaseUrl, merchantAuthConfig } from './env.j
 import { heartbeatAt, readEvent, readFeed } from './feed.js'
 import { startListener } from './listen.js'
 import { createLogger } from './logger.js'
+import { hasPushSubscription, removePushSubscriptions, savePushSubscription } from './push.js'
+import type { PushDeps } from './routes/push.js'
 import { createStreamHub } from './stream.js'
 
 /**
@@ -85,6 +88,30 @@ function main(): void {
   // like a quiet wallet (`T042`).
   const listenUrl = listenDatabaseUrl(config)
   const database = createDb(config)
+  // Throws on a half-set VAPID trio; none at all is push off (`T043`, `FR-027`).
+  const vapid = vapidFromEnv(process.env)
+  if (vapid === null)
+    logger.warn('push is off: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT are not set')
+  const push: PushDeps | undefined =
+    vapid === null
+      ? undefined
+      : (() => {
+          const sender = createPushSender({ vapid })
+          return {
+            publicKey: vapid.publicKey,
+            has: (body) => hasPushSubscription(database.db, body),
+            save: (body) => savePushSubscription(database.db, body),
+            remove: (body) => removePushSubscriptions(database.db, body),
+            // Short-lived: a browser that is offline right now gains nothing
+            // from hearing "notifications are on" tomorrow.
+            probe: (body) =>
+              sender.send(
+                { endpoint: body.endpoint, p256dh: body.keys.p256dh, auth: body.keys.auth },
+                welcomeMessage(body.owner),
+                { ttlSeconds: 300, urgency: 'normal' },
+              ),
+          }
+        })()
   const hub = createStreamHub({
     read: {
       allowance: (pda) => readCachedAllowance(database.db, pda),
@@ -130,6 +157,7 @@ function main(): void {
       aliveAt: () => heartbeatAt(database.db),
     },
     stream: { hub },
+    push,
     signatures: {
       // Стрічка на вимогу (`T030`): сховище порожнє до `T038`, тож історія
       // адреси береться з мережі на кожен запит картки.

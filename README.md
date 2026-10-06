@@ -75,8 +75,11 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   its heartbeat is fresh; the card does not show it yet and still lists the address's
   transactions. A permission closed before the indexer first saw it gets no history:
   there is nothing left on chain to describe it.
-- **Nothing is hosted.** Everything runs on a laptop; there are no push notifications
-  yet.
+- **Nothing is hosted.** Everything runs on a laptop.
+- **Push reaches only browsers that have Web Push.** Checked end to end in Chrome through
+  Google's push service. iOS delivers Web Push only to a web app added to the home
+  screen, and this page is not set up as one; Safari there shows the switch as
+  unavailable, and the feed carries everything a push would have said.
 
 ## Layout
 
@@ -86,6 +89,7 @@ apps/api            Hono 4 · read-only over the network, shared Zod contracts, 
 apps/indexer        logsSubscribe worker · transaction → permission events → Postgres, resumes from a cursor
 packages/chain      @solana/kit 7.1.1 · account decoding, PDA derivation, instruction builders
 packages/shared     Zod schemas and error format used by both sides of the API
+packages/push       Web Push for api and indexer: VAPID from env, payload, push-service answers
 packages/db         Drizzle schema (empty until the indexer exists)
 tools/merchant-sim  devnet-only test merchant: `whoami`, `charge`, `plan`
 tests               devnet campaigns and the allowance seeder
@@ -125,6 +129,14 @@ launch and build parameters, given on the command line.
 
 The API refuses to start without `JWT_SECRET` (32 characters or more) and `AUTH_DOMAIN`,
 rather than accepting an empty secret and answering `401` to an honest signature later.
+
+**Notifications are optional.** With `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` and
+`VAPID_SUBJECT` set (`npx web-push generate-vapid-keys`), the API and the indexer send
+Web Push: a charge due `PUSH_UPCOMING_LEAD_HOURS` ahead (24 by default) and a refused
+charge as soon as it is stored. With none of them, both run without push, the page says
+so, and every event is still in the feed. Two of three is a refusal at start — as is a
+public key that is not the half of the private one. The browser takes the public key
+from `GET /v1/push/key`, so a new pair needs no new Pages build.
 
 `VITE_DATA_SOURCE=mock` runs the web app on invented data with no network behind it —
 useful for looking at the screens, useless as evidence. The default is `api`.

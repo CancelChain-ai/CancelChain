@@ -1,10 +1,12 @@
 import { createChainClient, readAllowance } from '@cancelchain/chain'
+import { createPushSender, vapidFromEnv } from '@cancelchain/push'
 import { signature as toSignature } from '@solana/kit'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import { pino } from 'pino'
 import postgres from 'postgres'
 import type { DecodedTransaction } from './decode.js'
 import { indexerConfigFromEnv } from './env.js'
+import { createNotifier, type Notifier, UPCOMING_SCAN_INTERVAL_MS } from './notify.js'
 import { createStore } from './store.js'
 import { type IndexerSource, jsonSafe, runIndexer } from './subscribe.js'
 
@@ -18,6 +20,8 @@ const HEARTBEAT_INTERVAL_MS = 15_000
  */
 
 const config = indexerConfigFromEnv(process.env)
+// Throws on a half-set VAPID trio; none at all is push off (`T043`, `FR-027`).
+const vapid = vapidFromEnv(process.env)
 const log = pino({
   level: config.logLevel,
   base: { service: 'indexer' },
@@ -67,18 +71,47 @@ async function main(): Promise<void> {
   // client between transactions, and a prepared statement does not survive that.
   // One connection: writes are sequential, and the free tier's are shared with the API.
   const sql = postgres(config.databaseUrl, { prepare: false, max: 1, connect_timeout: 10 })
+  const db = drizzle(sql)
   const store = createStore({
-    db: drizzle(sql),
+    db,
     // `confirmed`, as the notifications: at `finalized` the account would read
     // ~13 s older than the transaction that just changed it.
     readAllowance: (pda) => readAllowance(chain, { pda, commitment: 'confirmed' }),
     log,
   })
 
+  // Push (`T043`): without VAPID keys nothing is sent, and nothing else changes.
+  const notifier: Notifier | null =
+    vapid === null
+      ? null
+      : createNotifier({
+          db,
+          sender: createPushSender({ vapid }),
+          refresh: (pdas) => store.refresh(pdas),
+          usdcMint: chain.usdcMint,
+          log,
+          leadMs: config.pushUpcomingLeadHours * 60 * 60 * 1000,
+        })
+  if (notifier === null) {
+    log.warn({}, 'push is off: VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT are not set')
+  }
+  // A failed pass is a warning, not a reason to stop indexing: the next one
+  // finds whatever this one did not send.
+  const notify = () => {
+    notifier?.run().catch((error: unknown) => {
+      log.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'push pass failed',
+      )
+    })
+  }
+
   async function sink(decoded: DecodedTransaction): Promise<void> {
     const result = await store.write(decoded)
     for (const event of decoded.events) log.info({ event: jsonSafe(event) }, 'event')
     log.debug({ signature: decoded.signature, ...result }, 'stored')
+    // A refusal goes out as soon as it is stored, not at the next scan.
+    if (result.inserted > 0) notify()
   }
 
   const controller = new AbortController()
@@ -112,6 +145,9 @@ async function main(): Promise<void> {
     })
   }
   const pulse = setInterval(beat, HEARTBEAT_INTERVAL_MS)
+  // Charges due have no transaction to react to: they are looked for.
+  const scan = notifier === null ? null : setInterval(notify, UPCOMING_SCAN_INTERVAL_MS)
+  notify()
   const onLive = (next: boolean) => {
     live = next
     beat()
@@ -120,6 +156,7 @@ async function main(): Promise<void> {
     await runIndexer({ source, sink, log, signal: controller.signal, program, resumeFrom, onLive })
   } finally {
     clearInterval(pulse)
+    if (scan !== null) clearInterval(scan)
     await sql.end({ timeout: 5 })
   }
 }

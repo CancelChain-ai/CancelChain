@@ -9,6 +9,7 @@ import { mockData, source } from './lib/source'
 import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
 import { useFeed } from './lib/useFeed'
+import { usePush } from './lib/usePush'
 import { useStream } from './lib/useStream'
 import { useSubscribeReview } from './lib/useSubscribeReview'
 import Merchant from './pages/Merchant'
@@ -41,18 +42,46 @@ const MOCK_ONLY_VIEWS: View[] = ['merchant']
  */
 const PLAN_PARAM = 'plan'
 
-function planFromLocation(): string | null {
-  const value = new URLSearchParams(window.location.search).get(PLAN_PARAM)
+/**
+ * The permission a notification points at: `?allowance=<address>` (`T043`). A
+ * click on a push opens its card; the parameter is dropped once read, so a
+ * reload or the back button lands on the list, as for any other card.
+ */
+const ALLOWANCE_PARAM = 'allowance'
+
+function paramFromLocation(name: string): string | null {
+  const value = new URLSearchParams(window.location.search).get(name)
   return value === null || value.trim() === '' ? null : value.trim()
 }
+
+function planFromLocation(): string | null {
+  return paramFromLocation(PLAN_PARAM)
+}
+
+function takeAllowanceFromLocation(): string | null {
+  const pda = paramFromLocation(ALLOWANCE_PARAM)
+  if (pda !== null) {
+    const url = new URL(window.location.href)
+    url.searchParams.delete(ALLOWANCE_PARAM)
+    window.history.replaceState(null, '', url)
+  }
+  return pda
+}
+
+/** Read once per page load: both initial states below come from the same reading. */
+const ALLOWANCE_ON_LOAD = takeAllowanceFromLocation()
 
 const App = () => {
   const { cluster } = useWalletEnvironment()
   const [planPda, setPlanPda] = useState<string | null>(planFromLocation)
   const [view, setView] = useState<View>(() =>
-    planFromLocation() === null ? 'subscriptions' : 'subscribe',
+    ALLOWANCE_ON_LOAD !== null
+      ? 'detail'
+      : planFromLocation() === null
+        ? 'subscriptions'
+        : 'subscribe',
   )
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(ALLOWANCE_ON_LOAD)
   /**
    * Мок M0 змінюється кліками, і список читає його через те саме джерело, що й
    * справжні дані. Ревізія входить у ключ запиту, тож зміна видна і в списку, і
@@ -76,6 +105,8 @@ const App = () => {
    * screen shows, and the screens only say whether it is running.
    */
   const live = useStream(owner)
+  /** Notifications in this browser (`T043`); the switch sits on the list. */
+  const push = usePush(owner)
 
   const openPlan = (pda: string) => {
     setPlanPda(pda)
@@ -208,6 +239,7 @@ const App = () => {
                 onOpen={openDetail}
                 cancel={cancel}
                 live={live}
+                push={push}
               />
             )}
           </CancelFlow>
@@ -224,6 +256,7 @@ const App = () => {
                   onOpen={openDetail}
                   cancel={cancel}
                   live={live}
+                  push={push}
                 />
               )}
             </CancelFlow>

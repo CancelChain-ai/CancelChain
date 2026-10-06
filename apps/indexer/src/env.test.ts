@@ -19,6 +19,18 @@ describe('indexerConfigFromEnv', () => {
     expect(indexerConfigFromEnv({ ...CHAIN, INDEXER_USE_WS: 'false' }).useWs).toBe(false)
   })
 
+  it('announces a charge 24 hours ahead unless told otherwise (T043)', () => {
+    expect(indexerConfigFromEnv(CHAIN).pushUpcomingLeadHours).toBe(24)
+    expect(
+      indexerConfigFromEnv({ ...CHAIN, PUSH_UPCOMING_LEAD_HOURS: '' }).pushUpcomingLeadHours,
+    ).toBe(24)
+    expect(
+      indexerConfigFromEnv({ ...CHAIN, PUSH_UPCOMING_LEAD_HOURS: '6' }).pushUpcomingLeadHours,
+    ).toBe(6)
+    expect(() => indexerConfigFromEnv({ ...CHAIN, PUSH_UPCOMING_LEAD_HOURS: '0' })).toThrow()
+    expect(() => indexerConfigFromEnv({ ...CHAIN, PUSH_UPCOMING_LEAD_HOURS: 'soon' })).toThrow()
+  })
+
   it('refuses anything but true or false', () => {
     expect(() => indexerConfigFromEnv({ ...CHAIN, INDEXER_USE_WS: '0' })).toThrow()
   })

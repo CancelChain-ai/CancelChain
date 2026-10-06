@@ -8,6 +8,7 @@ import {
   timestampSchema,
   u64Schema,
 } from './primitives.js'
+import { pushEndpointSchema, pushKeysSchema } from './push.js'
 
 /**
  * Контракти `/v1`. Одні й ті самі схеми валідують запит на сервері й розбирають
@@ -281,18 +282,48 @@ export type StreamMessage = z.infer<typeof streamMessageSchema>
  */
 export const STREAM_HEARTBEAT_MS = 20_000
 
+/**
+ * `POST /v1/push/subscribe` (`T043`). One browser may follow several wallets —
+ * a row per (endpoint, owner) — and the owner is not proven by a signature: it
+ * is public on the chain, and a push says nothing the chain does not.
+ */
 export const pushSubscribeBodySchema = z.object({
   owner: addressSchema,
-  endpoint: z.url(),
-  keys: z.object({
-    p256dh: z.string().min(1),
-    auth: z.string().min(1),
-  }),
+  endpoint: pushEndpointSchema,
+  keys: pushKeysSchema,
 })
 
+export type PushSubscribeBody = z.infer<typeof pushSubscribeBodySchema>
+
+/**
+ * `DELETE /v1/push/subscribe`. With `owner`, this browser stops following that
+ * wallet; without it, every wallet — the browser dropped the subscription itself.
+ */
 export const pushUnsubscribeBodySchema = z.object({
-  endpoint: z.url(),
+  endpoint: pushEndpointSchema,
+  owner: addressSchema.optional(),
 })
+
+export type PushUnsubscribeBody = z.infer<typeof pushUnsubscribeBodySchema>
+
+/**
+ * `GET /v1/push/key`. `enabled: false` — this installation has no VAPID keys:
+ * nothing is sent, and the page says so instead of offering a switch that does
+ * nothing (`FR-027`). The key comes from the server, not the bundle, so it can
+ * change without rebuilding the page.
+ */
+export const pushKeyResponseSchema = z.discriminatedUnion('enabled', [
+  z.object({
+    enabled: z.literal(true),
+    /** VAPID public key, base64url: the browser's `applicationServerKey`. */
+    publicKey: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{87}$/, 'expected an uncompressed P-256 key, base64url'),
+  }),
+  z.object({ enabled: z.literal(false) }),
+])
+
+export type PushKeyResponse = z.infer<typeof pushKeyResponseSchema>
 
 export const okResponseSchema = z.object({ ok: z.literal(true) })
 

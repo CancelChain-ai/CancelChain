@@ -18,6 +18,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
@@ -224,6 +225,9 @@ export const events = pgTable(
 /**
  * Підписка на push прив'язана до браузера, а не до особи (`FR-018`): адреси чи
  * іншого ідентифікатора людини тут немає й не буде.
+ *
+ * `owner` is the wallet this browser follows, and one browser may follow several
+ * (`T043`): a row is the pair (endpoint, owner), not the endpoint.
  */
 export const pushSubscriptions = pgTable(
   'push_subscriptions',
@@ -236,8 +240,36 @@ export const pushSubscriptions = pgTable(
     createdAt: moment('created_at').notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex('push_subscriptions_endpoint_key').on(table.endpoint),
+    uniqueIndex('push_subscriptions_endpoint_owner_key').on(table.endpoint, table.owner),
     index('push_subscriptions_owner_idx').on(table.owner),
+  ],
+)
+
+export const PUSH_KINDS = ['upcoming', 'rejected'] as const
+export type PushKind = (typeof PUSH_KINDS)[number]
+
+/**
+ * What was already sent where (`T043`). The indexer replays transactions after
+ * every restart and scans for charges due every few minutes; without this row
+ * each of those would buzz the same phone again. A row is claimed before the
+ * push goes out, so a notification reaches a browser at most once.
+ *
+ * `ref` names the occasion: the event id for a refusal, `pda@periodStartedAt`
+ * for a charge due — the next period is a new occasion, the same one is not.
+ */
+export const pushDeliveries = pgTable(
+  'push_deliveries',
+  {
+    subscriptionId: bigint('subscription_id', { mode: 'bigint' })
+      .notNull()
+      .references(() => pushSubscriptions.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<PushKind>().notNull(),
+    ref: text('ref').notNull(),
+    sentAt: moment('sent_at').notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.subscriptionId, table.kind, table.ref] }),
+    check('push_deliveries_kind_check', sql`${table.kind} in (${inList(PUSH_KINDS)})`),
   ],
 )
 
@@ -265,6 +297,7 @@ export type PlanRow = typeof plans.$inferSelect
 export type AllowanceRow = typeof allowances.$inferSelect
 export type EventRow = typeof events.$inferSelect
 export type PushSubscriptionRow = typeof pushSubscriptions.$inferSelect
+export type PushDeliveryRow = typeof pushDeliveries.$inferSelect
 export type IndexerCursorRow = typeof indexerCursor.$inferSelect
 
 export type NewMerchant = typeof merchants.$inferInsert

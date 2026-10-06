@@ -8,7 +8,9 @@ import {
   listedAllowanceSchema,
   MAX_EVENTS_PAGE,
   MERCHANT_JWT_TTL_SECONDS,
+  pushKeyResponseSchema,
   pushSubscribeBodySchema,
+  pushUnsubscribeBodySchema,
   SIGN_IN_MAX_AGE_SECONDS,
   signInBodySchema,
   signInMessageSchema,
@@ -92,14 +94,56 @@ describe('streamMessageSchema', () => {
 })
 
 describe('pushSubscribeBodySchema', () => {
+  const body = {
+    owner: OWNER,
+    endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+    keys: {
+      p256dh:
+        'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM',
+      auth: 'tBHItJI5svbpez7KI4CCXg',
+    },
+  }
+
   it('takes a browser endpoint and both keys', () => {
-    const body = {
-      owner: OWNER,
-      endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
-      keys: { p256dh: 'key', auth: 'auth' },
-    }
     expect(pushSubscribeBodySchema.parse(body)).toEqual(body)
-    expect(pushSubscribeBodySchema.safeParse({ ...body, endpoint: 'nope' }).success).toBe(false)
+  })
+
+  it('refuses an endpoint outside the browser push services', () => {
+    for (const endpoint of ['nope', 'https://example.com/push', 'http://fcm.googleapis.com/x']) {
+      expect(pushSubscribeBodySchema.safeParse({ ...body, endpoint }).success).toBe(false)
+    }
+  })
+
+  it('refuses keys that are not base64url', () => {
+    const keys = { ...body.keys, auth: 'not base64/url' }
+    expect(pushSubscribeBodySchema.safeParse({ ...body, keys }).success).toBe(false)
+  })
+})
+
+describe('pushUnsubscribeBodySchema', () => {
+  it('takes an endpoint with or without the wallet', () => {
+    const endpoint = 'https://updates.push.services.mozilla.com/wpush/v2/abc'
+    expect(pushUnsubscribeBodySchema.parse({ endpoint })).toEqual({ endpoint })
+    expect(pushUnsubscribeBodySchema.parse({ endpoint, owner: OWNER })).toEqual({
+      endpoint,
+      owner: OWNER,
+    })
+  })
+})
+
+describe('pushKeyResponseSchema', () => {
+  it('carries the key only when push is on', () => {
+    const publicKey =
+      'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM'
+    expect(pushKeyResponseSchema.parse({ enabled: true, publicKey })).toEqual({
+      enabled: true,
+      publicKey,
+    })
+    expect(pushKeyResponseSchema.parse({ enabled: false })).toEqual({ enabled: false })
+    expect(pushKeyResponseSchema.safeParse({ enabled: true }).success).toBe(false)
+    expect(pushKeyResponseSchema.safeParse({ enabled: true, publicKey: 'short' }).success).toBe(
+      false,
+    )
   })
 })
 

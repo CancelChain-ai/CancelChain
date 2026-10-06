@@ -22,6 +22,9 @@ import {
 } from '@wallet-standard/react'
 import { useCallback, useMemo } from 'react'
 
+// Moved to `packages/shared` with `T043`: the push text names addresses the same way.
+export { shortenAddress } from '@cancelchain/shared'
+
 /**
  * Підключення гаманця — **єдиний спосіб входу** (`FR-017`). Облікових записів,
  * паролів і персональних даних тут немає й бути не може: усе, що зберігається
@@ -128,17 +131,6 @@ export function walletAccountAddress(account: UiWalletAccount): Address {
   const { address } = account
   assertIsAddress(address)
   return address
-}
-
-/**
- * Адреса для показу: перші й останні символи. Base58-адресу цілком ніхто не
- * звіряє очима, а обрізана з обох боків підробка помітна — на відміну від
- * обрізаної з одного.
- */
-export function shortenAddress(address: string, edge = 4): string {
-  return address.length <= edge * 2 + 1
-    ? address
-    : `${address.slice(0, edge)}…${address.slice(-edge)}`
 }
 
 /**

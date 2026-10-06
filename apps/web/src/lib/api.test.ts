@@ -331,3 +331,55 @@ describe('the events of one allowance', () => {
     )
   })
 })
+
+describe('push (T043)', () => {
+  const PUBLIC_KEY =
+    'BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM'
+  const SUBSCRIPTION = {
+    owner: OWNER,
+    endpoint: 'https://fcm.googleapis.com/fcm/send/abc',
+    keys: { p256dh: 'BKey', auth: 'auth' },
+  }
+
+  it('reads whether this installation sends push', async () => {
+    const { fetch, calls } = respondWith(200, { enabled: true, publicKey: PUBLIC_KEY })
+    expect(await createApiClient('', fetch).getPushKey()).toEqual({
+      enabled: true,
+      publicKey: PUBLIC_KEY,
+    })
+    expect(calls[0]?.url).toBe('/v1/push/key')
+  })
+
+  it('posts the subscription as JSON and deletes it the same way', async () => {
+    const { fetch, calls } = respondWith(200, { ok: true })
+    const client = createApiClient('http://localhost:8080', fetch)
+    await client.subscribePush(SUBSCRIPTION)
+    await client.unsubscribePush({ endpoint: SUBSCRIPTION.endpoint, owner: OWNER })
+
+    expect(calls.map((call) => call.url)).toEqual([
+      'http://localhost:8080/v1/push/subscribe',
+      'http://localhost:8080/v1/push/subscribe',
+    ])
+    expect(calls[0]?.init).toMatchObject({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(SUBSCRIPTION),
+    })
+    expect(calls[1]?.init).toMatchObject({ method: 'DELETE' })
+  })
+
+  it('carries the reason the server named', async () => {
+    const { fetch } = respondWith(400, {
+      error: {
+        code: 'INVALID_INPUT',
+        message: 'the browser push service refused this subscription',
+        details: { reason: 'push_service_refused', status: 403 },
+      },
+    })
+    const failure = await createApiClient('', fetch)
+      .subscribePush(SUBSCRIPTION)
+      .catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ApiRequestError)
+    expect((failure as ApiRequestError).reason).toBe('push_service_refused')
+  })
+})

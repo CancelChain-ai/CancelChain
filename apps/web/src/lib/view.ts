@@ -14,9 +14,18 @@ import type {
   ListedAllowance,
   RejectReason,
 } from '@cancelchain/shared'
-import { rejectReasonLabel, SECONDS_PER_DAY, toU64 } from '@cancelchain/shared'
-import { shortenAddress } from '../chain/wallet.js'
+import {
+  rejectReasonLabel,
+  SECONDS_PER_DAY,
+  scaleAmount,
+  shortenAddress,
+  toU64,
+  USDC_DECIMALS,
+} from '@cancelchain/shared'
 import type { Permission } from './mockData.js'
+
+// Moved to `packages/shared` with `T043`: the push text reads amounts the same way.
+export { scaleAmount, USDC_DECIMALS }
 
 /**
  * Модель показу дозволу — те єдине, що знають екрани.
@@ -29,9 +38,6 @@ import type { Permission } from './mockData.js'
  * несе значення: сума — у найменших одиницях `bigint` (u64 не влазить у double,
  * і стеля дозволу — це чужі гроші), дата — `Date`, а не «6 Sep 2026».
  */
-
-/** USDC має шість знаків. Це не наша конвенція, а параметр самого міну. */
-export const USDC_DECIMALS = 6
 
 /**
  * Сума в найменших одиницях активу.
@@ -154,21 +160,6 @@ export const UNREADABLE_REASON_LABELS = {
   plan: 'its merchant plan could not be found, so its asset is unknown',
   fields: 'it holds a value that does not fit our model',
 } as const satisfies Record<AllowanceUnreadableReason, string>
-
-const MIN_FRACTION_DIGITS = 2
-
-/** Найменші одиниці → десятковий рядок. Без `Number`: u64 не влазить у double. */
-export function scaleAmount(amount: bigint, decimals: number): string {
-  if (decimals <= 0) return amount.toString(10)
-  const unit = 10n ** BigInt(decimals)
-  const whole = (amount / unit).toString(10)
-  const fraction = (amount % unit).toString(10).padStart(decimals, '0')
-  // Хвостові нулі прибираються, але два знаки лишаються завжди: «24» замість
-  // «24.00» у списку сум читається як інший порядок величини.
-  const trimmed = fraction.replace(/0+$/, '')
-  const kept = Math.max(MIN_FRACTION_DIGITS, trimmed.length)
-  return `${whole}.${fraction.slice(0, kept).padEnd(MIN_FRACTION_DIGITS, '0')}`
-}
 
 export function formatMoney(money: Money): string {
   if (money.decimals === null) return `${money.amount} of ${money.label}`

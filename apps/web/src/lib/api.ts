@@ -7,6 +7,11 @@ import {
   listAllowancesResponseSchema,
   listEventsResponseSchema,
   listSignaturesResponseSchema,
+  okResponseSchema,
+  type PushKeyResponse,
+  type PushSubscribeBody,
+  type PushUnsubscribeBody,
+  pushKeyResponseSchema,
 } from '@cancelchain/shared'
 import type { z } from 'zod'
 
@@ -32,12 +37,20 @@ export class ApiRequestError extends Error {
   readonly status: number
   /** `null` — статус помилковий, а тіло не у форматі `apiErrorSchema`. */
   readonly code: ErrorCode | null
+  /** `details.reason`, when the server named one (`push_disabled`, `node_behind`…). */
+  readonly reason: string | null
 
-  constructor(status: number, code: ErrorCode | null, message: string) {
+  constructor(
+    status: number,
+    code: ErrorCode | null,
+    message: string,
+    reason: string | null = null,
+  ) {
     super(message)
     this.name = 'ApiRequestError'
     this.status = status
     this.code = code
+    this.reason = reason
   }
 }
 
@@ -106,10 +119,28 @@ export interface ApiClient {
   getPlan(pda: string, subscriber: string | null, signal?: AbortSignal): Promise<PlanView>
 }
 
+/**
+ * Web Push (`T043`) — apart from `ApiClient`, which is the source of what the
+ * screens show; push is a setting of this browser, not a read.
+ */
+export interface PushApi {
+  /** Whether this installation sends push at all, and the key to subscribe with (`T043`). */
+  getPushKey(signal?: AbortSignal): Promise<PushKeyResponse>
+  /** This browser follows `owner`. The server sends a welcome push before it answers. */
+  subscribePush(body: PushSubscribeBody): Promise<void>
+  /** This browser stops following `owner` — or every wallet, without one. */
+  unsubscribePush(body: PushUnsubscribeBody): Promise<void>
+}
+
 /** Мінімум від `fetch`, потрібний клієнтові. Вужче — щоб тест не підробляв усе. */
 export type FetchLike = (
   input: string,
-  init?: { signal?: AbortSignal | undefined; headers?: Record<string, string> },
+  init?: {
+    signal?: AbortSignal | undefined
+    headers?: Record<string, string>
+    method?: 'GET' | 'POST' | 'DELETE'
+    body?: string
+  },
 ) => Promise<Response>
 
 /**
@@ -118,16 +149,31 @@ export type FetchLike = (
  * `T046`), а в розробці — прокси Vite. Замовчувати тут `http://localhost:8080`
  * означало б, що зібраний застосунок на чужій машині мовчки стукає в нікуди.
  */
-export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClient {
+export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClient & PushApi {
   const base = baseUrl.replace(/\/+$/, '')
 
   async function get<T>(path: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+    return request('GET', path, schema, signal)
+  }
+
+  async function request<T>(
+    method: 'GET' | 'POST' | 'DELETE',
+    path: string,
+    schema: z.ZodType<T>,
+    signal?: AbortSignal,
+    payload?: unknown,
+  ): Promise<T> {
     const url = `${base}${path}`
     let response: Response
     try {
       response = await fetchImpl(url, {
         signal,
-        headers: { accept: 'application/json' },
+        headers:
+          payload === undefined
+            ? { accept: 'application/json' }
+            : { accept: 'application/json', 'content-type': 'application/json' },
+        ...(method === 'GET' ? {} : { method }),
+        ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
       })
     } catch (error) {
       // Скасований запит — не збій: його скасував сам застосунок.
@@ -138,8 +184,14 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
     if (!response.ok) {
       const body: unknown = await response.json().catch(() => null)
       const parsed = apiErrorSchema.safeParse(body)
+      const reason = parsed.success ? parsed.data.error.details?.reason : undefined
       throw parsed.success
-        ? new ApiRequestError(response.status, parsed.data.error.code, parsed.data.error.message)
+        ? new ApiRequestError(
+            response.status,
+            parsed.data.error.code,
+            parsed.data.error.message,
+            typeof reason === 'string' ? reason : null,
+          )
         : new ApiRequestError(response.status, null, `${url} answered ${response.status}`)
     }
 
@@ -193,6 +245,13 @@ export function createApiClient(baseUrl: string, fetchImpl: FetchLike): ApiClien
         getPlanViewResponseSchema,
         signal,
       ),
+    getPushKey: (signal) => get('/v1/push/key', pushKeyResponseSchema, signal),
+    subscribePush: async (body) => {
+      await request('POST', '/v1/push/subscribe', okResponseSchema, undefined, body)
+    },
+    unsubscribePush: async (body) => {
+      await request('DELETE', '/v1/push/subscribe', okResponseSchema, undefined, body)
+    },
   }
 }
 
