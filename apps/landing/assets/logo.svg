@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 960" role="img" aria-label="CancelChain: a plug pulled out of its socket">
+  <rect width="960" height="960" rx="120" fill="#F2BF6B"/>
+  <g fill="none" stroke="#16150F" stroke-width="26" stroke-linecap="round">
+    <path d="M 345 559 C 260 620, 120 560, 170 700 S 330 820, 240 880 S 120 950, 110 945"/>
+    <path d="M 640 328 C 720 270, 690 180, 780 150 S 900 120, 900 30"/>
+  </g>
+  <g transform="translate(510 430) rotate(-38) scale(2.2)">
+    <path d="M -50 -22 L -80 -22 A 22 22 0 0 0 -80 22 L -50 22 Z" fill="#16150F"/>
+    <path d="M -50 -10 H -24 M -50 10 H -24" stroke="#16150F" stroke-width="7" stroke-linecap="round"/>
+    <path d="M 24 -26 L 52 -26 A 26 26 0 0 1 52 26 L 24 26 Z" fill="#16150F"/>
+  </g>
+  <path d="M 515 330 L 517 290 M 457 345 L 436 311 M 418 391 L 381 375 M 505 530 L 503 570 M 563 515 L 584 549 M 602 469 L 639 485" stroke="#16150F" stroke-width="16" stroke-linecap="round"/>
+</svg>

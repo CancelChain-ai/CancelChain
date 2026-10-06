@@ -215,8 +215,8 @@ schedule cannot: GitHub thins frequent schedules out to one run every few hours.
 
 **Page — GitHub Pages** (`.github/workflows/pages.yml`, on every push to `main`: the gate,
 then the build, then the deploy). The application is served from `/<repository>/app/`;
-the site root forwards there, carrying `?plan=` and `?allowance=` with it, until a
-landing page takes its place. Pages serves files only, so the API is named in the
+the site root is the landing page (`apps/landing`, static, no build), which still forwards
+any address carrying `?plan=` or `?allowance=` into the application. Pages serves files only, so the API is named in the
 repository variable `API_URL`, and the API lists the site's origin in `CORS_ORIGINS`. A
 build in `api` mode with no `API_URL` is refused, not deployed; `DATA_SOURCE=mock`
 publishes the invented-data demo on purpose. With a custom domain, `PAGES_BASE_PATH`

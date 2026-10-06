@@ -1,41 +1,382 @@
 <!doctype html>
 <!--
-  The site root on GitHub Pages (T046). The application lives in app/; until the
-  landing page (T061) takes this place, the root only forwards there.
+  The site root on GitHub Pages: the landing page (T061). The application lives
+  in app/.
 
-  Query and fragment travel along: merchants' subscribe links (?plan=) and
-  notification links (?allowance=) were handed out while the application sat at
-  the root, and they must keep opening the right screen. The landing page that
-  replaces this file has to keep forwarding addresses that carry them.
+  Addresses that carry ?plan= (merchants' subscribe links) or ?allowance=
+  (notification links) were handed out while the application sat at the root
+  (T046); they still forward into app/ with their query and fragment, before
+  anything is painted. Every other address gets this page.
+
+  Every claim here traces to the README or a recorded measurement, and what is
+  real and what is simulated is said on the page itself, not in a footer.
 -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="robots" content="noindex" />
-    <title>CancelChain</title>
-    <link
-      rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23F7F5F1'/%3E%3Crect x='2.5' y='4.5' width='11' height='7' rx='1' fill='none' stroke='%2316150F'/%3E%3Cpath d='M3 13 L13 3' stroke='%23A33A28' stroke-width='2'/%3E%3C/svg%3E"
-    />
     <script>
-      location.replace(`app/${location.search}${location.hash}`)
+      ;(() => {
+        const query = new URLSearchParams(location.search)
+        if (query.has('plan') || query.has('allowance')) {
+          location.replace(`app/${location.search}${location.hash}`)
+        }
+      })()
     </script>
-    <noscript><meta http-equiv="refresh" content="0; url=app/" /></noscript>
-    <style>
-      body {
-        margin: 0;
-        padding: 48px 16px;
-        background: #f7f5f1;
-        color: #16150f;
-        font: 16px/1.5 system-ui, sans-serif;
-      }
-      a {
-        color: #a33a28;
-      }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CancelChain — cancel a recurring charge on Solana</title>
+    <meta
+      name="description"
+      content="See every recurring-charge permission your Solana wallet has granted, and cancel any of them with one signature, so the next charge is refused on chain. Devnet."
+    />
+    <link rel="canonical" href="https://cancelchain-ai.github.io/CancelChain/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="CancelChain" />
+    <meta property="og:title" content="CancelChain — cancel one, and the next charge is refused" />
+    <meta
+      property="og:description"
+      content="Every recurring-charge permission your Solana wallet gave, on one screen. One signature closes it. Devnet only; merchants are simulated."
+    />
+    <meta property="og:url" content="https://cancelchain-ai.github.io/CancelChain/" />
+    <meta property="og:image" content="https://cancelchain-ai.github.io/CancelChain/assets/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The CancelChain mark, a plug pulled out of its socket, beside the line: Cancel one, and the next charge is refused."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#f7f5f1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#14130f" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="assets/logo.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,800&amp;display=swap"
+    />
+    <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <p>Opening CancelChain… If nothing happens, <a href="app/">open the app</a>.</p>
+    <header class="wrap top">
+      <a class="brand" href="./" aria-label="CancelChain, home">
+        <img src="assets/logo.svg" width="40" height="40" alt="" />
+        <span>CancelChain</span>
+      </a>
+      <nav aria-label="Primary">
+        <a href="#real">What is real here</a>
+        <a href="https://github.com/CancelChain-ai/CancelChain">Source</a>
+        <a href="app/">Open the app</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="wrap hero" aria-labelledby="claim">
+        <div class="hero-copy">
+          <p class="kicker">Recurring-charge permissions on Solana · devnet</p>
+          <h1 id="claim">
+            Every allowance your wallet gave, on one screen. Cancel one, and the next charge is
+            refused.
+          </h1>
+          <p class="lede">
+            CancelChain lists the recurring-charge permissions granted from a Solana wallet — by
+            any app — and closes any of them with one signature. The refusal comes from the chain,
+            not from a request to the merchant.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="app/">Open your allowances</a>
+            <a class="button" href="app/?allowance=3A5K9bwNYrQ3F5WAQ9xTvVXUpNXS5uVaDLXZSdLzFyPR"
+              >See a live card — no wallet needed</a
+            >
+          </div>
+          <p class="aside">
+            Devnet only. Every merchant here is a simulator, and the plans are invented.
+            <a href="#real">What is real, and what is played</a>.
+          </p>
+        </div>
+
+        <figure>
+          <div class="card">
+            <div class="strip"></div>
+            <div class="card-body">
+              <div class="card-head">
+                <span class="mono" title="FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF">FGHM…BkKF</span>
+                <span class="chip">Recurring</span>
+              </div>
+              <p class="num">Up to 15.00 USDC every 30 days</p>
+              <p class="num aside">0.00 USDC of 15.00 USDC used this period</p>
+              <dl>
+                <div>
+                  <dt>Recipient</dt>
+                  <dd class="mono">FGHMNo…22fBkKF</dd>
+                </div>
+                <div>
+                  <dt>Ceiling</dt>
+                  <dd class="num">15.00 USDC</dd>
+                </div>
+                <div>
+                  <dt>Period</dt>
+                  <dd>30 days</dd>
+                </div>
+                <div>
+                  <dt>Spent this period</dt>
+                  <dd class="num">0.00 USDC</dd>
+                </div>
+                <div>
+                  <dt>Next charge</dt>
+                  <dd class="num">5 Nov 2026, 21:35 UTC</dd>
+                </div>
+              </dl>
+              <span class="cancel" aria-hidden="true">Cancel</span>
+            </div>
+          </div>
+          <figcaption>
+            A real devnet allowance,
+            <a class="mono" href="https://explorer.solana.com/address/G76zDDHdFAk2y8YbAKKJuk7SaHhhoVkzx1fzvQQhMzQW?cluster=devnet">G76zDD…MzQW</a>,
+            as the app showed it on 6 October 2026 at 22:38 UTC — under a minute before it was
+            cancelled.
+          </figcaption>
+        </figure>
+      </section>
+
+      <svg class="cable" viewBox="0 0 1200 160" preserveAspectRatio="none" height="160" aria-hidden="true">
+        <path d="M 900 0 C 900 80, 700 60, 600 110 S 420 150, 380 160" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
+      </svg>
+
+      <div class="wrap">
+        <section class="section left" aria-labelledby="agreed">
+          <h2 id="agreed">What you agreed to</h2>
+          <p>
+            A card token sits with the merchant, and it has no ceiling of its own. On Solana a
+            recurring charge is now a permission that sits in your wallet, with a limit written into
+            it. CancelChain reads every such permission granted from your wallet, whichever app
+            asked for it, and gives each one a card.
+          </p>
+          <p>
+            Each card names five things without opening anything: who receives, the ceiling, the
+            period, what has been spent this period, and when the next charge can come.
+            <strong class="num">5 of 5</strong> on every card.
+          </p>
+          <p>
+            A wallet holding 100 permissions is listed in full in
+            <strong class="num">1.54 s</strong> (p95 of 40 first visits, budget 3 s, deployed stand,
+            7 October 2026).
+          </p>
+        </section>
+      </div>
+
+      <svg class="cable" viewBox="0 0 1200 140" preserveAspectRatio="none" height="140" aria-hidden="true">
+        <path d="M 380 0 C 360 70, 620 50, 760 100 C 800 115, 820 125, 820 140" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
+      </svg>
+
+      <div class="wrap">
+        <section class="section right" aria-labelledby="plug">
+          <h2 id="plug">Pulling the plug</h2>
+          <p>
+            <strong>Two clicks, one signature.</strong> Cancel on the card, sign in your wallet. The
+            permission's account is closed — not relabelled "cancelled" and kept — so there is
+            nothing left to charge against.
+          </p>
+          <p>
+            A cancelled permission is gone from the active list within
+            <strong class="num">1.7 s</strong> of confirmation (worst of 20, budget 15 s).
+          </p>
+          <p class="tx">
+            The cancel of the card above:
+            <a class="mono" href="https://explorer.solana.com/tx/xZd8Y18mCT67q78B6yw7ZQgRWAXn58bRMjtd7EKwyFUejr4z1RsKYkdmm7fafwfPWKNkiLvVPNbsgjRT3zP39mY?cluster=devnet">xZd8Y1…3zP39mY</a>
+            on the devnet explorer.
+          </p>
+        </section>
+      </div>
+
+      <svg class="cable break wide" viewBox="0 0 1200 260" aria-hidden="true">
+        <path d="M 820 0 C 800 50, 560 40, 430 100 C 360 140, 500 240, 568 190" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
+        <path d="M 689 106 C 730 77, 770 70, 820 95 S 960 170, 1200 150" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
+        <g transform="translate(640 140) rotate(-35)">
+          <g class="plug-male" fill="currentColor">
+            <path d="M -50 -22 L -80 -22 A 22 22 0 0 0 -80 22 L -50 22 Z" />
+            <path d="M -50 -10 H -24 M -50 10 H -24" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" />
+          </g>
+          <g class="plug-female" fill="currentColor">
+            <path d="M 24 -26 L 52 -26 A 26 26 0 0 1 52 26 L 24 26 Z" />
+          </g>
+        </g>
+        <path class="sparks" d="M 640 96 L 640 76 M 615 104 L 603 88 M 599 125 L 580 118 M 640 184 L 640 204 M 665 176 L 677 192 M 681 155 L 700 162" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+      </svg>
+      <svg class="cable break narrow" viewBox="400 0 600 260" aria-hidden="true">
+        <path d="M 820 0 C 800 50, 560 40, 430 100 C 360 140, 500 240, 568 190" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
+        <path d="M 689 106 C 730 77, 770 70, 820 95 S 960 170, 1200 150" fill="none" stroke="currentColor" stroke-width="7" stroke-linecap="round" />
+        <g transform="translate(640 140) rotate(-35)">
+          <g class="plug-male" fill="currentColor">
+            <path d="M -50 -22 L -80 -22 A 22 22 0 0 0 -80 22 L -50 22 Z" />
+            <path d="M -50 -10 H -24 M -50 10 H -24" fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" />
+          </g>
+          <g class="plug-female" fill="currentColor">
+            <path d="M 24 -26 L 52 -26 A 26 26 0 0 1 52 26 L 24 26 Z" />
+          </g>
+        </g>
+        <path class="sparks" d="M 640 96 L 640 76 M 615 104 L 603 88 M 599 125 L 580 118 M 640 184 L 640 204 M 665 176 L 677 192 M 681 155 L 700 162" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round" />
+      </svg>
+
+      <div class="wrap">
+        <section class="section left" aria-labelledby="next">
+          <h2 id="next">The merchant's next attempt</h2>
+          <p>
+            After a cancel, <strong class="num">0 of 200</strong> charges succeeded — every one
+            refused on chain because the account no longer exists (devnet, 2 September 2026,
+            recurring permissions). A refused attempt reaches your activity list in under
+            <strong class="num">5 s</strong> (worst of 20, budget 30 s).
+          </p>
+          <p>
+            While a permission is live, it still holds its ceiling:
+            <strong class="num">0 of 200</strong> attempts took more than the limit, each one a
+            single base unit over what was left.
+          </p>
+
+          <div class="activity">
+            <p class="label" id="activity-label">Activity · G76zDD…MzQW · as the app lists it</p>
+            <ol reversed aria-labelledby="activity-label">
+            <li class="num">
+              <div>
+                <time datetime="2026-10-06T22:38Z">6 Oct 22:38 UTC</time>
+                <div>Charge refused</div>
+                <div class="reason">Permission cancelled</div>
+                <a href="https://explorer.solana.com/tx/2jGGST1rQdBRqFhhEaHrAVyfuytb7BvAQ61UhNArJEgoHBtgMkyWp1yNitAMi7oWmYMqVvK4bfNAuU142kMzoYrR?cluster=devnet">2jGG…oYrR</a>
+              </div>
+              <div class="tried">tried 9.99 USDC</div>
+            </li>
+            <li class="num">
+              <div>
+                <time datetime="2026-10-06T22:38Z">6 Oct 22:38 UTC</time>
+                <div>Cancelled — the permission account was closed</div>
+                <a href="https://explorer.solana.com/tx/xZd8Y18mCT67q78B6yw7ZQgRWAXn58bRMjtd7EKwyFUejr4z1RsKYkdmm7fafwfPWKNkiLvVPNbsgjRT3zP39mY?cluster=devnet">xZd8…39mY</a>
+              </div>
+            </li>
+            <li class="num">
+              <div>
+                <time datetime="2026-10-06T22:38Z">6 Oct 22:38 UTC</time>
+                <div>Charge refused</div>
+                <div class="reason">Not enough funds</div>
+                <a href="https://explorer.solana.com/tx/5kELjVXtJNqfNooLayuuXEkYAfJs99N98z6ZXA36TBeCfYez63Ye67tVmFyqMDhtZT4uqLWZPgyyNYPZSkQ19F1k?cluster=devnet">5kEL…9F1k</a>
+              </div>
+              <div class="tried">tried 9.99 USDC</div>
+            </li>
+            <li class="num">
+              <div>
+                <time datetime="2026-10-06T22:35Z">6 Oct 22:35 UTC</time>
+                <div>Permission given</div>
+                <a href="https://explorer.solana.com/tx/22fdC6NhGNkA87cDLZ5t6AitMhBpLDbaRsrd7nPqznUpqTrWZeB5Qw1oMqfKZ3ixhv7Mr6uFfjxGQPRdqnLuYG4B?cluster=devnet">22fd…YG4B</a>
+              </div>
+            </li>
+            </ol>
+          </div>
+          <p class="aside">
+            The merchant here is our simulator, and the wallet held no USDC — so the attempt before
+            the cancel was refused for funds, and the one after it because there was no permission
+            left.
+          </p>
+        </section>
+
+        <div class="gap"></div>
+
+        <section class="section right" aria-labelledby="ends">
+          <h2 id="ends">A plan subscription ends on a date</h2>
+          <p>
+            A subscription to a merchant's plan is cancelled differently: it stops at the end of the
+            period already paid for. The card says the date, how much the merchant can still take
+            before it, and whether it already has.
+          </p>
+          <div class="ends">
+            <strong>Charges stop on 28 Oct 2026 at the latest</strong>
+            <p class="num">The merchant can still take up to its plan amount this period — or has already.</p>
+          </div>
+          <p>
+            On devnet the end date landed on the second the card predicted. Whether no charge gets
+            through after it, over 50 attempts, has not been measured yet.
+          </p>
+        </section>
+
+        <div class="gap"></div>
+
+        <section id="real" class="real" aria-labelledby="real-head">
+          <h2 id="real-head">What is real here, and what is played</h2>
+          <div class="two">
+            <div class="col">
+              <h3>Real</h3>
+              <p>
+                The protocol, the permissions, the signatures, the cancel and the refusal. Every
+                transaction on this page opens on the devnet explorer.
+              </p>
+              <h3>Played</h3>
+              <p>
+                Every merchant is <span class="mono">tools/merchant-sim</span>. Plans, names and
+                charge history are synthetic. This is devnet, not mainnet. No real merchant has
+                agreed to be paid this way, and nothing here tests that.
+              </p>
+            </div>
+            <div class="col">
+              <h3>Not yet</h3>
+              <p>
+                Pausing a subscription. Taking back "do not renew". A merchant panel. And the first
+                screen on a 3G phone: <strong class="num failed">4.6–5.1 s</strong> against a 2 s
+                target (WebPageTest 3G, 7 October 2026) — being worked on.
+              </p>
+              <h3>Not ever</h3>
+              <p>
+                Card or bank subscriptions. Editing a permission's ceiling, period or recipient —
+                the network has no such operation. Refunding part of a paid period — nothing is held
+                in advance.
+              </p>
+            </div>
+          </div>
+        </section>
+
+        <div class="gap"></div>
+
+        <section class="section left" aria-labelledby="stands">
+          <h2 id="stands">What it stands on</h2>
+          <p>
+            CancelChain has no on-chain code of its own. It works through the Subscriptions
+            Delegation Program,
+            <a class="mono address" href="https://explorer.solana.com/address/De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44?cluster=devnet">De1egAFMkMWZSN5rYXRj9CAdheBamobVNubTsi9avR44</a>,
+            audited by Cantina/Spearbit. That audit is of the program, not of CancelChain.
+          </p>
+          <p>
+            Transactions are signed only in your browser. The server holds no wallet; it reads the
+            chain and hands the browser a recent blockhash.
+          </p>
+        </section>
+      </div>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>CancelChain · MIT licence</span>
+        <span class="links">
+          <a href="https://github.com/CancelChain-ai/CancelChain">github.com/CancelChain-ai/CancelChain</a>
+          <a href="app/">Open the app</a>
+        </span>
+      </div>
+    </footer>
+
+    <script>
+      // The plug comes apart once, when the break scrolls into view. Without JS,
+      // or with reduced motion, it is simply drawn apart.
+      ;(() => {
+        if (!('IntersectionObserver' in window)) return
+        if (matchMedia('(prefers-reduced-motion: reduce)').matches) return
+        document.documentElement.classList.add('js-motion')
+        const observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue
+              entry.target.classList.add('pulled')
+              observer.unobserve(entry.target)
+            }
+          },
+          { threshold: 0.6 },
+        )
+        for (const svg of document.querySelectorAll('.break')) observer.observe(svg)
+      })()
+    </script>
   </body>
 </html>

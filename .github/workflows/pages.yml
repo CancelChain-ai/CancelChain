@@ -1,7 +1,8 @@
 # Deploys the site to GitHub Pages on every push to main, as one artifact:
-#   https://cancelchain-ai.github.io/CancelChain/       apps/landing — for now a
-#                                                     redirect into app/ (T061
-#                                                     puts the landing page here)
+#   https://cancelchain-ai.github.io/CancelChain/       apps/landing, the landing
+#                                                     page (T061); addresses with
+#                                                     ?plan= or ?allowance= still
+#                                                     forward into app/
 #   https://cancelchain-ai.github.io/CancelChain/app/   apps/web, the application
 #
 # Pages serves static files only. The web app reads its data from the API
