@@ -12,7 +12,7 @@ const ENV = {
   SOLANA_CLUSTER: 'devnet',
   SOLANA_RPC_URL: 'https://api.devnet.solana.com',
   USDC_MINT: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
-  MERCHANT_SIM_KEYPAIR_PATH: 'C:/keys/merchant-devnet.keypair.json',
+  MERCHANT_SIM_KEYPAIR_PATH: './.secrets/merchant-devnet.keypair.json',
 } as const
 
 describe('merchantSimConfigFromEnv', () => {
@@ -40,11 +40,11 @@ describe('merchantSimConfigFromEnv', () => {
   it(`ім'я файлу мусить збігатися з патерном .gitignore (${KEYPAIR_FILE_SUFFIX})`, () => {
     // Інакше помилковий `git add` затягнув би ключ у коміт.
     expect(() =>
-      merchantSimConfigFromEnv({ ...ENV, MERCHANT_SIM_KEYPAIR_PATH: 'C:/keys/id.json' }),
+      merchantSimConfigFromEnv({ ...ENV, MERCHANT_SIM_KEYPAIR_PATH: './.secrets/id.json' }),
     ).toThrow(KeypairPathError)
     // Дамп ZodError у консолі — шум замість причини; назовні йде одне речення.
     expect(() =>
-      merchantSimConfigFromEnv({ ...ENV, MERCHANT_SIM_KEYPAIR_PATH: 'C:/keys/id.json' }),
+      merchantSimConfigFromEnv({ ...ENV, MERCHANT_SIM_KEYPAIR_PATH: './.secrets/id.json' }),
     ).toThrow(/keypair file name must end with/)
   })
 
