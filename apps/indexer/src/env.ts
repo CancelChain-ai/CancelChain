@@ -11,8 +11,8 @@ const flagSchema = z.enum(['true', 'false']).transform((value) => value === 'tru
 const indexerEnvSchema = z.object({
   logLevel: z.enum(LOG_LEVELS).default('info'),
   /**
-   * `false` asks for the polling fallback (`T045`), which does not exist yet.
-   * Starting anyway would mean a worker that indexes nothing and looks healthy.
+   * `false` switches to the polling fallback (`T045`, `poll.ts`): only wallets
+   * with an open stream are read, every 15 s, instead of the whole program.
    */
   useWs: flagSchema.default(true),
   /** Where events are written (`T039`). A worker without it would index into nothing. */

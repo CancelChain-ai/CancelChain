@@ -4,6 +4,8 @@ import {
   events,
   eventsRetention,
   indexerHeartbeat,
+  PROGRAM_LOGS,
+  watchedWallets,
 } from '@cancelchain/db'
 import {
   type AllowanceEvent,
@@ -173,6 +175,34 @@ export async function heartbeatAt(db: FeedDb): Promise<string | null> {
     .orderBy(desc(indexerHeartbeat.aliveAt))
     .limit(1)
   return row === undefined ? null : iso(row.aliveAt)
+}
+
+/**
+ * How fresh one permission's feed is (`T045`): the later of the log loop's
+ * pulse — it reads the whole program — and, in the polling fallback, the moment
+ * the permission's wallet was last read to the head. The fallback's own pulse
+ * does not count: it says the poller is alive, not that this wallet was read.
+ * `null` when neither ever happened.
+ */
+export async function feedSyncedAt(db: FeedDb, pda: string): Promise<string | null> {
+  const [[pulse], [wallet]] = await Promise.all([
+    db
+      .select({ at: indexerHeartbeat.aliveAt })
+      .from(indexerHeartbeat)
+      .where(eq(indexerHeartbeat.name, PROGRAM_LOGS))
+      .limit(1),
+    db
+      .select({ at: watchedWallets.syncedAt })
+      .from(allowances)
+      .innerJoin(watchedWallets, eq(watchedWallets.owner, allowances.owner))
+      .where(eq(allowances.pda, pda))
+      .limit(1),
+  ])
+  const moments = [pulse?.at, wallet?.at].flatMap((at) =>
+    at === undefined || at === null ? [] : [iso(at)],
+  )
+  if (moments.length === 0) return null
+  return moments.reduce((later, at) => (Date.parse(at) > Date.parse(later) ? at : later))
 }
 
 /**

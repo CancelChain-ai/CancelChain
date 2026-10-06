@@ -21,13 +21,14 @@ import { validate } from '../validate.js'
  * has never seen answers `200` with `tracked: false`, not `404`: the store not
  * knowing it does not mean the network has no history of it. `stale` comes from
  * the indexer's heartbeat, not from the cursor — the cursor moves only when the
- * program has transactions.
+ * program has transactions; in the polling fallback (`T045`), from when the
+ * permission's wallet was last read.
  */
 
 export type EventsDeps = {
   feed: (pda: Address, page: { cursor?: string; limit: number }) => Promise<FeedPage>
-  /** The indexer's last heartbeat, `null` when it never ran. */
-  aliveAt: () => Promise<string | null>
+  /** When this permission's feed was last known complete (`feedSyncedAt`); `null` — never. */
+  syncedAt: (pda: Address) => Promise<string | null>
   /** The depth the worker last enforced (`T044`); `null` — none reported yet. */
   retention: () => Promise<FeedRetention | null>
   now?: () => number
@@ -49,7 +50,7 @@ export function eventsRoute(deps: EventsDeps): Hono<AppEnv> {
         if (error instanceof InvalidCursorError) return fail(c, 'INVALID_INPUT', error.message)
         throw error
       }
-      const [syncedAt, retention] = await Promise.all([deps.aliveAt(), deps.retention()])
+      const [syncedAt, retention] = await Promise.all([deps.syncedAt(pda), deps.retention()])
       return c.json(
         listEventsResponseSchema.parse({
           ...page,

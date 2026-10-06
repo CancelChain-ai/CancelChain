@@ -17,6 +17,13 @@ import { type DecodedTransaction, decodeTransaction, type TransactionRecord } fr
  * transaction landing in between is either in the catch-up or in the buffered
  * stream — possibly in both, which the recent-signature set and, from `T039`,
  * the database's unique key absorb.
+ *
+ * **A socket that dies without closing must not be one either** (`T045`). kit
+ * does not throw when the node stops sending, so while live the same catch-up
+ * also runs on a timer (`SWEEP_INTERVAL_MS`). What it finds is indexed at once —
+ * the loss is bounded by one interval — and a transaction the sweep found that
+ * the stream still has not delivered one interval later means the stream is
+ * dead: the connection is dropped and opened again.
  */
 
 export type LogNotification = {
@@ -70,6 +77,8 @@ export type RunIndexerOptions = {
    * heartbeat (`T041`): a live indexer is one that would see a charge now.
    */
   onLive?: (live: boolean) => void
+  /** How often the live loop checks the stream against the node's history; `0` turns the sweep off. */
+  sweepIntervalMs?: number
 }
 
 /** Reconnect delay: 1 s, 2 s, 4 s … capped at 30 s. */
@@ -128,6 +137,13 @@ async function withDeadline<T>(
   }
 }
 
+/**
+ * The watchdog's period. The same 15 s as the polling fallback: a transaction
+ * the stream dropped still reaches the feed inside `SC-006`'s 30 s. One
+ * `getSignaturesForAddress` per sweep when nothing happened — about 5 800 a day.
+ */
+export const SWEEP_INTERVAL_MS = 15_000
+
 /** One page of `getSignaturesForAddress` — the node's own maximum. */
 export const CATCH_UP_PAGE = 1_000
 
@@ -162,14 +178,22 @@ class RecentSignatures {
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
-export async function runIndexer(options: RunIndexerOptions): Promise<void> {
-  const { source, sink, log, signal } = options
+export type ReadResult = { status: 'decoded'; decoded: DecodedTransaction } | { status: 'skipped' }
+
+/**
+ * Fetch and decode one transaction — the part that can fail the same way every
+ * time for one transaction. Shared by the log loop and the polling fallback
+ * (`poll.ts`), so both give up on the same transactions for the same reasons.
+ */
+export function createTransactionReader(options: {
+  source: Pick<IndexerSource, 'transaction'>
+  log: IndexerLog
+  sleep?: (ms: number) => Promise<void>
+  program?: Address
+}): (item: SignatureInfo) => Promise<ReadResult> {
+  const { source, log } = options
   const sleep = options.sleep ?? defaultSleep
-  const recent = new RecentSignatures(5_000)
-  let last: SignatureInfo | null = options.resumeFrom ?? null
   const readFailures = new Map<string, number>()
-  let failures = 0
-  let live = false
 
   async function fetchTransaction(signature: string): Promise<TransactionRecord | null> {
     for (let attempt = 1; attempt <= TRANSACTION_FETCH_ATTEMPTS; attempt++) {
@@ -180,10 +204,7 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
     return null
   }
 
-  /** Fetch and decode — the part that can fail the same way every time for one transaction. */
-  async function read(
-    item: SignatureInfo,
-  ): Promise<{ status: 'decoded'; decoded: DecodedTransaction } | { status: 'skipped' }> {
+  return async function read(item: SignatureInfo): Promise<ReadResult> {
     try {
       const tx = await fetchTransaction(item.signature)
       if (tx === null) {
@@ -218,6 +239,79 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
       return { status: 'skipped' }
     }
   }
+}
+
+/**
+ * Runs tasks one at a time, in the order they were queued. The stream and the
+ * sweep both hand transactions to the sink, and the cursor must see them in turn.
+ */
+function serialQueue(): <T>(task: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve()
+  return (task) => {
+    const run = tail.then(task, task)
+    tail = run.catch(() => {})
+    return run
+  }
+}
+
+/** Resolves after `ms`, or as soon as `signal` aborts. */
+export function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    const done = () => {
+      clearTimeout(timer)
+      signal.removeEventListener('abort', done)
+      resolve()
+    }
+    const timer = setTimeout(done, ms)
+    signal.addEventListener('abort', done, { once: true })
+  })
+}
+
+/**
+ * The stream's items until it ends or `signal` aborts. A socket that died
+ * silently never settles its pending read; without the race, dropping the
+ * connection would not get the loop out of it.
+ */
+async function* untilAborted<T>(stream: AsyncIterable<T>, signal: AbortSignal): AsyncGenerator<T> {
+  const iterator = stream[Symbol.asyncIterator]()
+  const aborted = new Promise<IteratorResult<T>>((resolve) => {
+    const done = () => resolve({ done: true, value: undefined })
+    if (signal.aborted) done()
+    else signal.addEventListener('abort', done, { once: true })
+  })
+  try {
+    while (true) {
+      const next = await Promise.race([iterator.next(), aborted])
+      if (next.done === true) return
+      yield next.value
+    }
+  } finally {
+    // Not awaited: a dead socket's iterator may never answer `return()` either.
+    iterator.return?.()?.catch(() => {})
+  }
+}
+
+export async function runIndexer(options: RunIndexerOptions): Promise<void> {
+  const { source, sink, log, signal } = options
+  const sleep = options.sleep ?? defaultSleep
+  const sweepIntervalMs = options.sweepIntervalMs ?? SWEEP_INTERVAL_MS
+  const recent = new RecentSignatures(5_000)
+  let last: SignatureInfo | null = options.resumeFrom ?? null
+  let failures = 0
+  let live = false
+  const read = createTransactionReader({
+    source,
+    log,
+    sleep,
+    ...(options.program === undefined ? {} : { program: options.program }),
+  })
+  const serial = serialQueue()
+  /** Found by a sweep and not yet delivered by the stream: signature → when found. */
+  const sweptOnly = new Map<string, number>()
 
   async function handle(item: SignatureInfo): Promise<void> {
     if (recent.has(item.signature)) return
@@ -238,7 +332,15 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
     failures = 0
   }
 
-  async function catchUp(from: SignatureInfo): Promise<void> {
+  /**
+   * Replays what landed after `from`, oldest first. A sweep hears, through
+   * `found`, every item nothing had handled before, and logs only when there
+   * were some — it runs every 15 s.
+   */
+  async function catchUp(
+    from: SignatureInfo,
+    sweep?: { found: (item: SignatureInfo) => void },
+  ): Promise<void> {
     const missed: SignatureInfo[] = []
     let before: string | undefined
     for (let page = 0; page < CATCH_UP_MAX_PAGES; page++) {
@@ -266,10 +368,55 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
         'gap too large for catch-up — history between these points is not indexed',
       )
     }
-    log.info({ from: from.signature, missed: missed.length }, 'catching up')
+    if (sweep === undefined) {
+      log.info({ from: from.signature, missed: missed.length }, 'catching up')
+    } else {
+      const found = missed.filter((item) => !recent.has(item.signature)).length
+      if (found > 0) log.info({ from: from.signature, found }, 'sweep found transactions')
+    }
     for (const item of missed.reverse()) {
       if (signal.aborted) return
+      if (sweep !== undefined && !recent.has(item.signature)) sweep.found(item)
       await handle(item)
+    }
+  }
+
+  /**
+   * The watchdog of one live connection. Each interval it first looks at what
+   * earlier sweeps found: anything the stream has not delivered a whole
+   * interval later means the stream stopped, and the connection is dropped.
+   * Then it sweeps again. A failed sweep is a warning; the next one retries.
+   */
+  async function watch(connection: AbortController): Promise<void> {
+    sweptOnly.clear()
+    while (!connection.signal.aborted) {
+      await pause(sweepIntervalMs, connection.signal)
+      if (connection.signal.aborted) return
+      const overdue = [...sweptOnly].filter(([, at]) => Date.now() - at >= sweepIntervalMs)
+      if (overdue.length > 0) {
+        log.warn(
+          { missed: overdue.map(([signature]) => signature), last: last?.signature ?? null },
+          'stream missed transactions the sweep found — reconnecting',
+        )
+        connection.abort()
+        return
+      }
+      const from = last
+      if (from === null) continue
+      try {
+        await serial(() =>
+          catchUp(from, { found: (item) => sweptOnly.set(item.signature, Date.now()) }),
+        )
+      } catch (error) {
+        if (connection.signal.aborted) return
+        log.warn(
+          {
+            last: last?.signature ?? null,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'sweep failed',
+        )
+      }
     }
   }
 
@@ -295,14 +442,24 @@ export async function runIndexer(options: RunIndexerOptions): Promise<void> {
         connection,
       )
       log.info({ resumeFrom: last?.signature ?? null }, 'subscribed')
-      if (last !== null) await catchUp(last)
+      if (last !== null) {
+        const from = last
+        await serial(() => catchUp(from))
+      }
       if (signal.aborted) break
       live = true
       options.onLive?.(true)
-      for await (const notification of stream) {
-        failures = 0
-        await handle(notification)
-        if (signal.aborted) break
+      const watchdog = sweepIntervalMs > 0 ? watch(connection) : Promise.resolve()
+      try {
+        for await (const notification of untilAborted(stream, connection.signal)) {
+          failures = 0
+          sweptOnly.delete(notification.signature)
+          await serial(() => handle(notification))
+          if (signal.aborted) break
+        }
+      } finally {
+        connection.abort()
+        await watchdog
       }
       if (!signal.aborted) log.warn({ last: last?.signature ?? null }, 'subscription ended')
     } catch (error) {

@@ -82,6 +82,13 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   (`EVENTS_RETENTION_DAYS`, never fewer than 90); the card names that depth and, where a
   permission's history is cut, the date of the cut with a link to the full trail on the
   network.
+- **Without a WebSocket, only open pages are followed.** `INDEXER_USE_WS=false` stops
+  reading the whole program and instead polls, every 15 s, the wallets that have a page
+  open: their subscription authority and each permission they hold. A wallet nobody is
+  looking at is caught up when its page opens again, so its feed has no gap, but a
+  refused charge reaches the feed and the push only then, not when it happened. With
+  the WebSocket on, the same catch-up runs every 15 s as a watchdog, so a socket that
+  dies without closing costs at most one interval.
 - **Push reaches only browsers that have Web Push.** Checked end to end in Chrome through
   Google's push service. iOS delivers Web Push only to a web app added to the home
   screen, and this page is not set up as one; Safari there shows the switch as
@@ -92,7 +99,7 @@ Said plainly, because a demo creates a false sense of proof if it is not:
 ```
 apps/web            React 18 + Vite 7 · wallet-standard connection, list, card, cancel flow
 apps/api            Hono 4 · read-only over the network, shared Zod contracts, 60 req/min
-apps/indexer        logsSubscribe worker · transaction → permission events → Postgres, resumes from a cursor
+apps/indexer        logsSubscribe worker (or 15 s polling of open wallets) · transaction → permission events → Postgres, resumes from a cursor
 packages/chain      @solana/kit 7.1.1 · account decoding, PDA derivation, instruction builders
 packages/shared     Zod schemas and error format used by both sides of the API
 packages/push       Web Push for api and indexer: VAPID from env, payload, push-service answers

@@ -1,7 +1,7 @@
 import { vapidFromEnv } from '@cancelchain/push'
 import { pino } from 'pino'
 import { indexerConfigFromEnv } from './env.js'
-import { PollingFallbackMissingError, startIndexer } from './worker.js'
+import { startIndexer } from './worker.js'
 
 /**
  * The indexer as its own process: read the environment, run until SIGINT or
@@ -29,8 +29,6 @@ try {
   await indexer.done
 } catch (error) {
   // `process.exitCode`, not `process.exit()`: the worker stops by running out of work.
-  if (error instanceof PollingFallbackMissingError) log.fatal(error.message)
-  else
-    log.fatal({ error: error instanceof Error ? error.message : String(error) }, 'indexer failed')
+  log.fatal({ error: error instanceof Error ? error.message : String(error) }, 'indexer failed')
   process.exitCode = 1
 }

@@ -57,6 +57,13 @@
       "when": 1791285154220,
       "tag": "0007_events_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791287263347,
+      "tag": "0008_wallet_polling",
+      "breakpoints": true
     }
   ]
 }

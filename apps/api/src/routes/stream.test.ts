@@ -2,7 +2,7 @@ import { type Allowance, apiErrorSchema, streamMessageSchema } from '@cancelchai
 import { Hono } from 'hono'
 import { afterEach, describe, expect, it } from 'vitest'
 import { errorHandler, notFoundHandler } from '../errors.js'
-import { createLogger } from '../logger.js'
+import { createLogger, requestLogger } from '../logger.js'
 import { createStreamHub, type StreamHub } from '../stream.js'
 import type { AppEnv } from '../types.js'
 import { createOutbox, type StreamDeps, streamRoute } from './stream.js'
@@ -53,6 +53,7 @@ function setup(over: Partial<StreamDeps> & { maxStreams?: number } = {}) {
   const app = new Hono<AppEnv>()
   app.notFound(notFoundHandler)
   app.onError(errorHandler)
+  app.use('*', requestLogger(createLogger('silent')))
   app.route('/', streamRoute({ hub, ...deps }))
   return { hub, app }
 }
@@ -210,5 +211,57 @@ describe('createOutbox', () => {
     outbox.push(update)
     outbox.push(update)
     expect(outbox.take()).toEqual([{ type: 'ready' }, update, update])
+  })
+})
+
+describe('GET /v1/stream — watched wallets (T045)', () => {
+  it('marks the wallet as watched on opening and again every heartbeat', async () => {
+    const watched: string[] = []
+    const { app } = setup({
+      heartbeatMs: 20,
+      watch: async (owner) => {
+        watched.push(owner)
+      },
+    })
+    const stream = frames(await connect(app))
+    await stream.next(1)
+    expect(watched).toEqual([OWNER])
+
+    await stream.next(2)
+
+    expect(watched).toEqual([OWNER, OWNER, OWNER])
+  })
+
+  it('keeps streaming when the mark cannot be written', async () => {
+    const { app } = setup({
+      heartbeatMs: 20,
+      watch: async () => {
+        throw new Error('database went away')
+      },
+    })
+    const stream = frames(await connect(app))
+
+    const [ready, ping] = await stream.next(2)
+
+    expect(ready?.event).toBe('ready')
+    expect(ping?.event).toBe('ping')
+  })
+
+  it('keeps marking a busy stream, which never pings', async () => {
+    const watched: string[] = []
+    const { app, hub } = setup({
+      heartbeatMs: 40,
+      watch: async (owner) => {
+        watched.push(owner)
+      },
+    })
+    const stream = frames(await connect(app))
+    await stream.next(1)
+    for (let i = 0; i < 12; i += 1) {
+      await hub.notify(NOTICE)
+      await stream.next(1)
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(watched.length).toBeGreaterThanOrEqual(3)
   })
 })

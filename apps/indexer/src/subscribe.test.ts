@@ -47,6 +47,13 @@ type Connection = {
   neverOpens?: boolean
   /** Transactions that land while this socket is open but are never delivered on it. */
   unseen?: SignatureInfo[]
+  /**
+   * Land right after the items, and this socket never says so — nor closes: a
+   * stream that went silent (`T045`).
+   */
+  lost?: SignatureInfo[]
+  /** Land with the items, but reach this socket only `afterMs` later. */
+  late?: { item: SignatureInfo; afterMs: number }
 }
 
 /**
@@ -83,6 +90,14 @@ function scriptedSource(input: {
       return (async function* () {
         for (const item of connection.items) {
           land(item)
+          yield item
+        }
+        for (const item of connection.lost ?? []) land(item)
+        if (connection.late !== undefined) {
+          const { item, afterMs } = connection.late
+          land(item)
+          await new Promise((resolve) => setTimeout(resolve, afterMs))
+          if (signal.aborted) return
           yield item
         }
         for (const item of connection.unseen ?? []) land(item)
@@ -138,6 +153,9 @@ async function runUntil(
     sink?: (d: DecodedTransaction) => Promise<void>
     subscribeTimeoutMs?: number
     onLive?: (live: boolean) => void
+    sweepIntervalMs?: number
+    /** Stops the loop after this long, whatever was sunk. */
+    stopAfterMs?: number
   } = {},
 ) {
   const controller = new AbortController()
@@ -151,6 +169,7 @@ async function runUntil(
     resumeFrom: extra.resumeFrom,
     subscribeTimeoutMs: extra.subscribeTimeoutMs,
     onLive: extra.onLive,
+    sweepIntervalMs: extra.sweepIntervalMs,
     // Yields to the event loop, so a loop that never stops still lets the test time out.
     sleep: async (ms) => {
       sleeps.push(ms)
@@ -162,7 +181,12 @@ async function runUntil(
       if (done(sunk)) controller.abort()
     },
   })
+  const timer =
+    extra.stopAfterMs === undefined
+      ? undefined
+      : setTimeout(() => controller.abort(), extra.stopAfterMs)
   await finished
+  clearTimeout(timer)
   return { sunk, sleeps, log }
 }
 
@@ -442,5 +466,87 @@ describe('reconnectDelayMs', () => {
     expect([1, 2, 3, 4, 5, 6, 7, 20].map(reconnectDelayMs)).toEqual([
       1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000,
     ])
+  })
+})
+
+describe('runIndexer — the sweep (T045)', () => {
+  const kinds = (sunk: DecodedTransaction[]) => sunk.map((d) => d.events.map((e) => e.kind))
+
+  it('indexes what a silent stream dropped within one sweep, then opens the socket again', async () => {
+    const source = scriptedSource({
+      connections: [
+        { items: [], after: 'hold', lost: [CANCEL] },
+        { items: [CHARGE], after: 'hold' },
+      ],
+    })
+    const { sunk, log } = await runUntil(source, (s) => s.length === 2, {
+      resumeFrom: SUBSCRIBE,
+      sweepIntervalMs: 30,
+    })
+    expect(kinds(sunk)).toEqual([['cancelled'], ['charged']])
+    expect(source.calls.logs).toBe(2)
+    expect(log.lines).toContainEqual(
+      expect.objectContaining({
+        level: 'warn',
+        message: 'stream missed transactions the sweep found — reconnecting',
+        object: expect.objectContaining({ missed: [CANCEL.signature] }),
+      }),
+    )
+  })
+
+  it('takes a late notification for late, not for a dead stream', async () => {
+    const source = scriptedSource({
+      connections: [{ items: [], after: 'hold', late: { item: CANCEL, afterMs: 75 } }],
+    })
+    const { sunk, log } = await runUntil(source, () => false, {
+      resumeFrom: SUBSCRIBE,
+      sweepIntervalMs: 50,
+      stopAfterMs: 260,
+    })
+    // Found by the sweep at ~50 ms, delivered at ~75 ms: stored once, socket kept.
+    expect(sunk.map((d) => d.signature)).toEqual([CANCEL.signature])
+    expect(source.calls.logs).toBe(1)
+    expect(log.lines.map((line) => line.message)).not.toContain(
+      'stream missed transactions the sweep found — reconnecting',
+    )
+  })
+
+  it('keeps the stream when a sweep fails, and says so', async () => {
+    const scripted = scriptedSource({
+      connections: [{ items: [], after: 'hold', late: { item: CANCEL, afterMs: 120 } }],
+    })
+    let asked = 0
+    const source: IndexerSource = {
+      ...scripted,
+      async signaturesSince(input) {
+        asked++
+        // The catch-up on connecting answers; every sweep after it is refused.
+        if (asked > 1)
+          throw new SolanaError(SOLANA_ERROR__RPC__TRANSPORT_HTTP_ERROR, {
+            headers: new Headers(),
+            message: 'Too Many Requests',
+            statusCode: 429,
+          })
+        return scripted.signaturesSince(input)
+      },
+    }
+    const { sunk, log } = await runUntil(source, (s) => s.length === 1, {
+      resumeFrom: SUBSCRIBE,
+      sweepIntervalMs: 30,
+    })
+    expect(sunk.map((d) => d.signature)).toEqual([CANCEL.signature])
+    expect(scripted.calls.logs).toBe(1)
+    expect(log.lines.map((line) => line.message)).toContain('sweep failed')
+  })
+
+  it('does not sweep when told not to', async () => {
+    const source = scriptedSource({ connections: [{ items: [], after: 'hold', lost: [CANCEL] }] })
+    const { sunk } = await runUntil(source, () => false, {
+      resumeFrom: SUBSCRIBE,
+      sweepIntervalMs: 0,
+      stopAfterMs: 80,
+    })
+    expect(sunk).toEqual([])
+    expect(source.calls.signaturesSince).toBe(1)
   })
 })

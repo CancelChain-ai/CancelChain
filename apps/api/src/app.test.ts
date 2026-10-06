@@ -40,7 +40,7 @@ function app(overrides: Partial<AppDeps> = {}) {
     },
     events: {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
-      aliveAt: async () => null,
+      syncedAt: async () => null,
       retention: async () => null,
     },
     stream: { hub: idleHub() },

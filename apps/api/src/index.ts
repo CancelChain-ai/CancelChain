@@ -20,13 +20,14 @@ import { createApp } from './app.js'
 import { readCachedAllowance } from './cache.js'
 import { createDb, type Db, listenConnection } from './db.js'
 import { apiConfigFromEnv, listenDatabaseUrl, merchantAuthConfig } from './env.js'
-import { heartbeatAt, readEvent, readFeed, readRetention } from './feed.js'
+import { feedSyncedAt, heartbeatAt, readEvent, readFeed, readRetention } from './feed.js'
 import { startListener } from './listen.js'
 import { createLogger } from './logger.js'
 import { hasPushSubscription, removePushSubscriptions, savePushSubscription } from './push.js'
 import type { PushDeps } from './routes/push.js'
 import { createStreamHub } from './stream.js'
 import { superviseIndexer } from './supervise.js'
+import { watchWallet } from './watch.js'
 
 /**
  * Точка входу сервісу. Усе, що тут відбувається, — читання оточення, створення
@@ -156,10 +157,10 @@ async function main(): Promise<void> {
     },
     events: {
       feed: (pda, page) => readFeed(database.db, pda, page),
-      aliveAt: () => heartbeatAt(database.db),
+      syncedAt: (pda) => feedSyncedAt(database.db, pda),
       retention: () => readRetention(database.db),
     },
-    stream: { hub },
+    stream: { hub, watch: (owner) => watchWallet(database.db, owner) },
     push,
     signatures: {
       // Стрічка на вимогу (`T030`): сховище порожнє до `T038`, тож історія

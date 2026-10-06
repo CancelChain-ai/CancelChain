@@ -58,7 +58,7 @@ function app(events: Partial<AppDeps['events']> = {}) {
     },
     events: {
       feed: async () => TRACKED,
-      aliveAt: async () => '2026-10-03T12:00:15.000Z',
+      syncedAt: async () => '2026-10-03T12:00:15.000Z',
       retention: async () => ({
         enforced: true,
         days: 90,
@@ -145,12 +145,12 @@ describe('GET /v1/allowances/:pda/events', () => {
   })
 
   it('stale when the last heartbeat is older than SC-006 allows', async () => {
-    const { body } = await get(app({ aliveAt: async () => '2026-10-03T11:59:59.000Z' }))
+    const { body } = await get(app({ syncedAt: async () => '2026-10-03T11:59:59.000Z' }))
     expect(body).toMatchObject({ stale: true, syncedAt: '2026-10-03T11:59:59.000Z' })
   })
 
   it('stale, with no time to show, when the indexer never ran', async () => {
-    const { body } = await get(app({ aliveAt: async () => null }))
+    const { body } = await get(app({ syncedAt: async () => null }))
     expect(body).toMatchObject({ stale: true, syncedAt: null })
   })
 

@@ -6,6 +6,7 @@ import {
   eventsRetention,
   indexerHeartbeat,
   type NewEvent,
+  watchedWallets,
 } from '@cancelchain/db'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
@@ -14,6 +15,7 @@ import {
   decodeCursor,
   encodeCursor,
   type FeedDb,
+  feedSyncedAt,
   heartbeatAt,
   InvalidCursorError,
   readFeed,
@@ -57,7 +59,9 @@ afterAll(async () => {
 })
 
 beforeEach(async () => {
-  await client.exec('TRUNCATE events, allowances, indexer_heartbeat RESTART IDENTITY CASCADE')
+  await client.exec(
+    'TRUNCATE events, allowances, indexer_heartbeat, watched_wallets RESTART IDENTITY CASCADE',
+  )
 })
 
 async function track(pda: string = PDA): Promise<void> {
@@ -263,5 +267,77 @@ describe('readRetention (T044)', () => {
       .insert(eventsRetention)
       .values({ name: 'events', days: null, keptSince: null, ranAt: '2026-10-03T12:00:00Z' })
     expect(await readRetention(db)).toEqual({ enforced: false })
+  })
+})
+
+describe('feedSyncedAt (T045)', () => {
+  async function ownedPermission() {
+    await db.insert(allowances).values({
+      pda: PDA,
+      owner: OWNER,
+      delegate: PLAN,
+      mint: USDC,
+      kind: 'subscription',
+      capAmount: 9_990_000n,
+      periodSeconds: 2_592_000,
+      spentInPeriod: 0n,
+      periodStartedAt: '2026-09-28T17:07:36Z',
+      status: 'active',
+      planPda: PLAN,
+      lastSlot: 505_227_700,
+      syncedAt: '2026-09-28T17:08:00Z',
+    })
+  }
+
+  it('null when neither the log loop nor the wallet poll ever ran', async () => {
+    await ownedPermission()
+    expect(await feedSyncedAt(db, PDA)).toBeNull()
+  })
+
+  it("the log loop's pulse, when it reads the whole program", async () => {
+    await ownedPermission()
+    await db
+      .insert(indexerHeartbeat)
+      .values({ name: 'program-logs', aliveAt: '2026-10-06T12:00:15Z' })
+    expect(await feedSyncedAt(db, PDA)).toBe('2026-10-06T12:00:15.000Z')
+  })
+
+  it("the wallet's own sync in the polling fallback; the poller's pulse does not count", async () => {
+    await ownedPermission()
+    await db
+      .insert(indexerHeartbeat)
+      .values({ name: 'wallet-poll', aliveAt: '2026-10-06T12:00:30Z' })
+    expect(await feedSyncedAt(db, PDA)).toBeNull()
+    await db.insert(watchedWallets).values({
+      owner: OWNER,
+      activeUntil: '2026-10-06T12:02:00Z',
+      syncedAt: '2026-10-06T12:00:20Z',
+    })
+    expect(await feedSyncedAt(db, PDA)).toBe('2026-10-06T12:00:20.000Z')
+  })
+
+  it('the later of the two, whichever it is', async () => {
+    await ownedPermission()
+    await db
+      .insert(indexerHeartbeat)
+      .values({ name: 'program-logs', aliveAt: '2026-10-06T11:00:00Z' })
+    await db.insert(watchedWallets).values({
+      owner: OWNER,
+      activeUntil: '2026-10-06T12:02:00Z',
+      syncedAt: '2026-10-06T12:00:20Z',
+    })
+    expect(await feedSyncedAt(db, PDA)).toBe('2026-10-06T12:00:20.000Z')
+    await db.update(indexerHeartbeat).set({ aliveAt: '2026-10-06T12:05:00Z' })
+    expect(await feedSyncedAt(db, PDA)).toBe('2026-10-06T12:05:00.000Z')
+  })
+
+  it("another wallet's sync says nothing about this permission", async () => {
+    await ownedPermission()
+    await db.insert(watchedWallets).values({
+      owner: '8N6FWYVvCvcf3ZR2NfRmEbnVWZ1GvmuKXtqoMoBMvmKN',
+      activeUntil: '2026-10-06T12:02:00Z',
+      syncedAt: '2026-10-06T12:00:20Z',
+    })
+    expect(await feedSyncedAt(db, PDA)).toBeNull()
   })
 })

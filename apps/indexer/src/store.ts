@@ -7,6 +7,7 @@ import {
   indexerHeartbeat,
   type NewAllowance,
   type NewEvent,
+  PROGRAM_LOGS,
 } from '@cancelchain/db'
 import {
   type Allowance,
@@ -36,7 +37,7 @@ import { jsonSafe, type SignatureInfo } from './subscribe.js'
 export type StoreDb = PgDatabase<PgQueryResultHKT, Record<string, unknown>>
 
 /** The indexer has one stream; the table allows more, should a second one ever exist. */
-export const CURSOR_NAME = 'program-logs'
+export const CURSOR_NAME = PROGRAM_LOGS
 
 /** Log lines kept per row. A refusal keeps more — the reason sits at the end of the log. */
 export const RAW_LOG_LINES = { success: 20, refusal: 200 } as const
@@ -75,8 +76,18 @@ export type BackfillResult = {
   unmapped: number
 }
 
+export type WriteOptions = {
+  /**
+   * `false` in the polling fallback (`T045`): it reads only watched wallets, so
+   * a transaction it stores says nothing about how far the *program* has been
+   * read. Moving the program's cursor would make the log loop, once back,
+   * resume past everything the fallback never looked at.
+   */
+  programCursor?: boolean
+}
+
 export type Store = {
-  write(decoded: DecodedTransaction): Promise<WriteResult>
+  write(decoded: DecodedTransaction, options?: WriteOptions): Promise<WriteResult>
   cursor(): Promise<SignatureInfo | null>
   /**
    * Categorises stored refusals that have none (`T040`). Idempotent: it only
@@ -84,8 +95,12 @@ export type Store = {
    * left uncategorised fill themselves on the next start.
    */
   backfillReasons(): Promise<BackfillResult>
-  /** The indexer is alive and listening right now (`T041`). */
-  heartbeat(): Promise<void>
+  /**
+   * The indexer is alive and listening right now (`T041`). `name` tells the log
+   * loop's pulse from the polling fallback's: only the former says the whole
+   * program is read.
+   */
+  heartbeat(name?: string): Promise<void>
   /**
    * Reads permissions from the chain into the cache, outside any transaction
    * of theirs (`T043`): a charge-due push checks the chain first (`FR-024`),
@@ -124,7 +139,10 @@ export function createStore(options: StoreOptions): Store {
     return states
   }
 
-  async function write(decoded: DecodedTransaction): Promise<WriteResult> {
+  async function write(
+    decoded: DecodedTransaction,
+    writeOptions: WriteOptions = {},
+  ): Promise<WriteResult> {
     const blockTime = blockTimeOf(decoded, now)
     if (blockTime.estimated) {
       log.warn({ signature: decoded.signature }, 'block time unknown, using the time of indexing')
@@ -243,25 +261,27 @@ export function createStore(options: StoreOptions): Store {
                 .returning({ id: events.id })
             ).length
 
-      await tx
-        .insert(indexerCursor)
-        .values({
-          name: CURSOR_NAME,
-          lastSignature: decoded.signature,
-          lastSlot: base.slot,
-          updatedAt: now().toISOString(),
-        })
-        .onConflictDoUpdate({
-          target: indexerCursor.name,
-          set: {
+      if (writeOptions.programCursor !== false) {
+        await tx
+          .insert(indexerCursor)
+          .values({
+            name: CURSOR_NAME,
             lastSignature: decoded.signature,
             lastSlot: base.slot,
             updatedAt: now().toISOString(),
-          },
-          // Catch-up replays older transactions after newer ones were stored;
-          // the cursor never moves back.
-          setWhere: sql`${indexerCursor.lastSlot} <= ${base.slot}`,
-        })
+          })
+          .onConflictDoUpdate({
+            target: indexerCursor.name,
+            set: {
+              lastSignature: decoded.signature,
+              lastSlot: base.slot,
+              updatedAt: now().toISOString(),
+            },
+            // Catch-up replays older transactions after newer ones were stored;
+            // the cursor never moves back.
+            setWhere: sql`${indexerCursor.lastSlot} <= ${base.slot}`,
+          })
+      }
 
       if (untracked.length > 0) {
         log.warn(
@@ -360,11 +380,11 @@ export function createStore(options: StoreOptions): Store {
     return new Set([...states].flatMap(([pda, state]) => (state.state === 'open' ? [pda] : [])))
   }
 
-  async function heartbeat(): Promise<void> {
+  async function heartbeat(name: string = CURSOR_NAME): Promise<void> {
     const aliveAt = now().toISOString()
     await db
       .insert(indexerHeartbeat)
-      .values({ name: CURSOR_NAME, aliveAt })
+      .values({ name, aliveAt })
       .onConflictDoUpdate({ target: indexerHeartbeat.name, set: { aliveAt } })
   }
 

@@ -1,12 +1,13 @@
-import { createChainClient, readAllowance } from '@cancelchain/chain'
+import { createChainClient, readAllowance, readAllowances } from '@cancelchain/chain'
 import { createPushSender, type VapidConfig } from '@cancelchain/push'
-import { signature as toSignature } from '@solana/kit'
+import { address as toAddress, signature as toSignature } from '@solana/kit'
 import { drizzle } from 'drizzle-orm/postgres-js'
 import type { Logger } from 'pino'
 import postgres from 'postgres'
 import type { DecodedTransaction } from './decode.js'
 import type { IndexerConfig } from './env.js'
 import { createNotifier, type Notifier, UPCOMING_SCAN_INTERVAL_MS } from './notify.js'
+import { createWalletBook, POLL_HEARTBEAT, runWalletPoller, type WalletSource } from './poll.js'
 import { RETENTION_INTERVAL_MS, runRetention } from './retention.js'
 import { createStore } from './store.js'
 import { type IndexerSource, jsonSafe, runIndexer } from './subscribe.js'
@@ -28,13 +29,6 @@ export type RunningIndexer = {
   stop(): Promise<void>
 }
 
-export class PollingFallbackMissingError extends Error {
-  constructor() {
-    super('INDEXER_USE_WS=false asks for the polling fallback, which is T045 and not built yet')
-    this.name = 'PollingFallbackMissingError'
-  }
-}
-
 /**
  * The indexer as a part that can live in any process (`T044`): its own entry
  * (`index.ts`) or inside the API on a single free web service, where
@@ -50,7 +44,6 @@ export async function startIndexer(options: {
   log: Logger
 }): Promise<RunningIndexer> {
   const { config, vapid, log } = options
-  if (!config.useWs) throw new PollingFallbackMissingError()
 
   const chain = createChainClient(config.chain)
   const program = chain.programAddress
@@ -66,27 +59,51 @@ export async function startIndexer(options: {
         }
       })()
     },
-    async signaturesSince({ until, before, limit }) {
-      const items = await chain.rpc
-        .getSignaturesForAddress(program, {
-          until: until === undefined ? undefined : toSignature(until),
-          before: before === undefined ? undefined : toSignature(before),
-          limit,
-          commitment: 'confirmed',
-        })
-        .send()
-      return items.map((item) => ({ signature: item.signature, slot: item.slot }))
-    },
-    async transaction(signature) {
-      return chain.rpc
-        .getTransaction(toSignature(signature), {
-          encoding: 'json',
-          // Version 1 transactions already run on devnet and reach this program
-          // through CPI; asking for 0 turns each of them into an RPC error.
-          maxSupportedTransactionVersion: 1,
-          commitment: 'confirmed',
-        })
-        .send()
+    signaturesSince: (page) => signaturesFor(program, page),
+    transaction,
+  }
+
+  async function signaturesFor(
+    address: string,
+    { until, before, limit }: { until?: string; before?: string; limit: number },
+  ) {
+    const items = await chain.rpc
+      .getSignaturesForAddress(toAddress(address), {
+        until: until === undefined ? undefined : toSignature(until),
+        before: before === undefined ? undefined : toSignature(before),
+        limit,
+        commitment: 'confirmed',
+      })
+      .send()
+    return items.map((item) => ({
+      signature: item.signature,
+      slot: item.slot,
+      blockTime: item.blockTime === null ? null : Number(item.blockTime),
+    }))
+  }
+
+  async function transaction(signature: string) {
+    return chain.rpc
+      .getTransaction(toSignature(signature), {
+        encoding: 'json',
+        // Version 1 transactions already run on devnet and reach this program
+        // through CPI; asking for 0 turns each of them into an RPC error.
+        maxSupportedTransactionVersion: 1,
+        commitment: 'confirmed',
+      })
+      .send()
+  }
+
+  // The fallback (`T045`): the same node calls, by wallet instead of by socket.
+  const walletSource: WalletSource = {
+    signaturesFor,
+    transaction,
+    async permissionsOf(owner) {
+      const read = await readAllowances(chain, { owner: toAddress(owner), commitment: 'confirmed' })
+      return [
+        ...read.allowances.map((allowance) => allowance.pda as string),
+        ...read.unreadable.map((entry) => entry.address as string),
+      ]
     },
   }
 
@@ -136,7 +153,9 @@ export async function startIndexer(options: {
   }
 
   async function sink(decoded: DecodedTransaction): Promise<void> {
-    const result = await store.write(decoded)
+    // The fallback reads some wallets, not the program: its writes leave the
+    // program's cursor where the log loop left it.
+    const result = await store.write(decoded, { programCursor: config.useWs })
     for (const event of decoded.events) log.info({ event: jsonSafe(event) }, 'event')
     log.debug({ signature: decoded.signature, ...result }, 'stored')
     // A refusal goes out as soon as it is stored, not at the next scan.
@@ -154,6 +173,7 @@ export async function startIndexer(options: {
     {
       cluster: chain.cluster,
       program,
+      mode: config.useWs ? 'logs' : 'poll',
       resumeFrom: resumeFrom?.signature ?? null,
       retentionDays: config.eventsRetentionDays,
     },
@@ -167,7 +187,9 @@ export async function startIndexer(options: {
     if (!live) return
     store.heartbeat().catch(warn('heartbeat failed'))
   }
-  const pulse = setInterval(beat, HEARTBEAT_INTERVAL_MS)
+  // The fallback beats per round instead, under its own name: it is alive, but
+  // reading only watched wallets, and `/events` must not take it for the log loop.
+  const pulse = config.useWs ? setInterval(beat, HEARTBEAT_INTERVAL_MS) : undefined
   // Charges due have no transaction to react to: they are looked for.
   const scan = notifier === null ? null : setInterval(notify, UPCOMING_SCAN_INTERVAL_MS)
   const daily = setInterval(
@@ -183,15 +205,29 @@ export async function startIndexer(options: {
   const controller = new AbortController()
   const done = (async () => {
     try {
-      await runIndexer({
-        source,
-        sink,
-        log,
-        signal: controller.signal,
-        program,
-        resumeFrom,
-        onLive,
-      })
+      if (config.useWs) {
+        await runIndexer({
+          source,
+          sink,
+          log,
+          signal: controller.signal,
+          program,
+          resumeFrom,
+          onLive,
+        })
+      } else {
+        await runWalletPoller({
+          source: walletSource,
+          book: createWalletBook(db),
+          refresh: (pdas) => store.refresh(pdas),
+          sink,
+          log,
+          signal: controller.signal,
+          settlementMint: chain.usdcMint,
+          retentionDays: config.eventsRetentionDays,
+          onRound: () => void store.heartbeat(POLL_HEARTBEAT).catch(warn('heartbeat failed')),
+        })
+      }
     } finally {
       clearInterval(pulse)
       if (scan !== null) clearInterval(scan)

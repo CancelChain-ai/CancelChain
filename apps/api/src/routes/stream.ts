@@ -26,6 +26,13 @@ import { validate } from '../validate.js'
 
 export type StreamDeps = {
   hub: StreamHub
+  /**
+   * Marks the wallet as looked at (`T045`, `watched_wallets`): on opening and
+   * every `heartbeatMs` after, so the indexer's polling fallback reads it while
+   * the page is open.
+   * A failed write is logged, not fatal — the stream itself still works.
+   */
+  watch?: (owner: string) => Promise<void>
   heartbeatMs?: number
   /**
    * Messages waiting for a slow client. Past this the backlog is dropped for a
@@ -66,6 +73,12 @@ export function streamRoute(deps: StreamDeps): Hono<AppEnv> {
 
   return new Hono<AppEnv>().get('/v1/stream', validate('query', streamQuerySchema), (c) => {
     const { owner } = c.req.valid('query')
+    const logger = c.get('logger')
+    const watch = () => {
+      deps.watch?.(owner).catch((error: unknown) => {
+        logger.warn({ err: error, owner }, 'could not mark the wallet as watched')
+      })
+    }
     const outbox = createOutbox(maxBacklog)
     let closed = false
     let wake: (() => void) | null = null
@@ -83,6 +96,7 @@ export function streamRoute(deps: StreamDeps): Hono<AppEnv> {
     if (unsubscribe === null) {
       return fail(c, 'RATE_LIMITED', 'this server holds as many streams as it can; try again later')
     }
+    watch()
 
     /** `true` when woken by a message or a close, `false` after a quiet `heartbeatMs`. */
     function nextWake(): Promise<boolean> {
@@ -100,6 +114,9 @@ export function streamRoute(deps: StreamDeps): Hono<AppEnv> {
     }
 
     return streamSSE(c, async (stream) => {
+      // Its own timer, not the ping: a busy stream never pings, and its wallet
+      // must not drop out of the fallback while events keep coming.
+      const marking = setInterval(watch, heartbeatMs)
       stream.onAbort(() => {
         closed = true
         wake?.()
@@ -118,6 +135,7 @@ export function streamRoute(deps: StreamDeps): Hono<AppEnv> {
           if (!(await nextWake())) outbox.push({ type: 'ping' })
         }
       } finally {
+        clearInterval(marking)
         unsubscribe()
       }
     })

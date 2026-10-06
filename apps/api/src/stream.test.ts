@@ -254,3 +254,20 @@ describe('createStreamHub', () => {
     expect(b.close).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('createStreamHub — watched wallet turned fresh (T045)', () => {
+  it('tells only that wallet to read again, and reads no row', async () => {
+    const { hub, readers } = setup()
+    const owner = listener()
+    const stranger = listener()
+    hub.subscribe(OWNER, owner.subscriber)
+    hub.subscribe(STRANGER, stranger.subscriber)
+
+    await hub.notify(JSON.stringify({ kind: 'wallet', owner: OWNER }))
+
+    expect(owner.received).toEqual([{ type: 'resync' }])
+    expect(stranger.received).toEqual([])
+    expect(readers.allowance).not.toHaveBeenCalled()
+    expect(readers.event).not.toHaveBeenCalled()
+  })
+})

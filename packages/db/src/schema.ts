@@ -281,6 +281,9 @@ export const indexerCursor = pgTable('indexer_cursor', {
   updatedAt: moment('updated_at').notNull().defaultNow(),
 })
 
+/** The log loop's name, for its cursor and its heartbeat. */
+export const PROGRAM_LOGS = 'program-logs'
+
 /**
  * The indexer's pulse (`T041`): written every few seconds while its log
  * subscription is open and catch-up is done. The cursor cannot say this — it
@@ -288,6 +291,10 @@ export const indexerCursor = pgTable('indexer_cursor', {
  * a dead indexer and a dead one as fresh until the next transaction.
  */
 export const indexerHeartbeat = pgTable('indexer_heartbeat', {
+  /**
+   * `PROGRAM_LOGS` — the log loop, reading the whole program; the polling
+   * fallback beats under its own name (`T045`) and does not count for `/events`.
+   */
   name: text('name').primaryKey(),
   aliveAt: moment('alive_at').notNull(),
 })
@@ -320,6 +327,30 @@ export const eventsRetention = pgTable(
     ),
   ],
 )
+
+/**
+ * Wallets someone is looking at right now (`T045`): the polling fallback reads
+ * only these. The API writes `active_until` while a `/v1/stream` of the wallet
+ * is open; the indexer writes `synced_at` once every address of the wallet has
+ * been read to the head — the wallet's own pulse, since in that mode nobody
+ * reads the whole program and the program's heartbeat says nothing about it.
+ */
+export const watchedWallets = pgTable(
+  'watched_wallets',
+  {
+    owner: text('owner').primaryKey(),
+    activeUntil: moment('active_until').notNull(),
+    syncedAt: moment('synced_at'),
+  },
+  (table) => [index('watched_wallets_active_until_idx').on(table.activeUntil)],
+)
+
+/**
+ * How long one sign of life keeps a wallet watched. Three stream pings
+ * (`STREAM_HEARTBEAT_MS`, 20 s) fit in it, so one lost write does not drop a
+ * wallet that is still open on someone's screen.
+ */
+export const WALLET_WATCH_TTL_MS = 2 * 60 * 1000
 
 export type MerchantRow = typeof merchants.$inferSelect
 export type PlanRow = typeof plans.$inferSelect

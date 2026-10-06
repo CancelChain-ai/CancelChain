@@ -25,6 +25,9 @@ const noticeSchema = z.discriminatedUnion('kind', [
     owner: z.string().nullable(),
   }),
   z.object({ kind: z.literal('allowance'), pda: z.string(), owner: z.string() }),
+  // A watched wallet's feed turned fresh in the polling fallback (`T045`): no
+  // row changed, but `stale` did — the wallet's streams read again.
+  z.object({ kind: z.literal('wallet'), owner: z.string() }),
 ])
 
 export type StreamNotice = z.infer<typeof noticeSchema>
@@ -84,7 +87,9 @@ export function createStreamHub(deps: StreamHubDeps): StreamHub {
     const owner = notice.owner
 
     try {
-      if (notice.kind === 'allowance') {
+      if (notice.kind === 'wallet') {
+        deliver(owner, { type: 'resync' })
+      } else if (notice.kind === 'allowance') {
         const allowance = await deps.read.allowance(notice.pda)
         if (allowance !== null) deliver(owner, { type: 'allowance.updated', allowance })
       } else {
