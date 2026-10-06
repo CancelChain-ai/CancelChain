@@ -1,4 +1,4 @@
-import type { Address } from '@cancelchain/shared'
+import type { Address, FeedRetention } from '@cancelchain/shared'
 import {
   EVENTS_STALE_AFTER_MS,
   getAllowanceParamsSchema,
@@ -28,6 +28,8 @@ export type EventsDeps = {
   feed: (pda: Address, page: { cursor?: string; limit: number }) => Promise<FeedPage>
   /** The indexer's last heartbeat, `null` when it never ran. */
   aliveAt: () => Promise<string | null>
+  /** The depth the worker last enforced (`T044`); `null` — none reported yet. */
+  retention: () => Promise<FeedRetention | null>
   now?: () => number
 }
 
@@ -47,12 +49,13 @@ export function eventsRoute(deps: EventsDeps): Hono<AppEnv> {
         if (error instanceof InvalidCursorError) return fail(c, 'INVALID_INPUT', error.message)
         throw error
       }
-      const syncedAt = await deps.aliveAt()
+      const [syncedAt, retention] = await Promise.all([deps.aliveAt(), deps.retention()])
       return c.json(
         listEventsResponseSchema.parse({
           ...page,
           syncedAt,
           stale: syncedAt === null || now() - Date.parse(syncedAt) > EVENTS_STALE_AFTER_MS,
+          retention,
         }),
       )
     },

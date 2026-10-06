@@ -41,6 +41,9 @@ importers:
       '@cancelchain/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@cancelchain/indexer':
+        specifier: workspace:*
+        version: link:../indexer
       '@cancelchain/push':
         specifier: workspace:*
         version: link:../../packages/push

@@ -1,5 +1,17 @@
-import { allowances, type EventRow, events, indexerHeartbeat } from '@cancelchain/db'
-import { type AllowanceEvent, eventSchema, fromU64 } from '@cancelchain/shared'
+import {
+  allowances,
+  type EventRow,
+  events,
+  eventsRetention,
+  indexerHeartbeat,
+} from '@cancelchain/db'
+import {
+  type AllowanceEvent,
+  eventSchema,
+  type FeedRetention,
+  feedRetentionSchema,
+  fromU64,
+} from '@cancelchain/shared'
 import { and, desc, eq, min, type SQL, sql } from 'drizzle-orm'
 import type { PgDatabase, PgQueryResultHKT } from 'drizzle-orm/pg-core'
 import { z } from 'zod'
@@ -161,4 +173,23 @@ export async function heartbeatAt(db: FeedDb): Promise<string | null> {
     .orderBy(desc(indexerHeartbeat.aliveAt))
     .limit(1)
   return row === undefined ? null : iso(row.aliveAt)
+}
+
+/**
+ * The depth the worker last enforced (`T044`, `FR-029`), or `null` when no
+ * retention pass has reported to this store yet. Read from the worker's own
+ * row, not from configuration: the page names what was done.
+ */
+export async function readRetention(db: FeedDb): Promise<FeedRetention | null> {
+  const [row] = await db
+    .select({ days: eventsRetention.days, keptSince: eventsRetention.keptSince })
+    .from(eventsRetention)
+    .orderBy(desc(eventsRetention.ranAt))
+    .limit(1)
+  if (row === undefined) return null
+  return feedRetentionSchema.parse(
+    row.days === null || row.keptSince === null
+      ? { enforced: false }
+      : { enforced: true, days: row.days, keptSince: iso(row.keptSince) },
+  )
 }

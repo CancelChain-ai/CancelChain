@@ -89,6 +89,7 @@ function app(overrides: Partial<PlansDeps> = {}) {
     events: {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
+      retention: async () => null,
     },
     stream: { hub: idleHub() },
     signatures: { history: async () => ({ items: [], syncedAt: SYNCED_AT, more: false }) },

@@ -214,6 +214,21 @@ export const listEventsQuerySchema = z.object({
  * is alive and listening. An empty feed means "nothing happened" only when the
  * permission is tracked and the feed is not stale.
  */
+/** `FR-029`: the feed keeps at least this many days. */
+export const MIN_FEED_RETENTION_DAYS = 90
+
+export const feedRetentionSchema = z.discriminatedUnion('enforced', [
+  z.object({
+    enforced: z.literal(true),
+    days: z.number().int().min(MIN_FEED_RETENTION_DAYS),
+    /** Nothing older than this is kept for any permission. */
+    keptSince: timestampSchema,
+  }),
+  z.object({ enforced: z.literal(false) }),
+])
+
+export type FeedRetention = z.infer<typeof feedRetentionSchema>
+
 export const listEventsResponseSchema = z.object({
   items: z.array(eventSchema),
   nextCursor: z.string().min(1).nullable(),
@@ -234,6 +249,12 @@ export const listEventsResponseSchema = z.object({
   syncedAt: timestampSchema.nullable(),
   /** No heartbeat within `EVENTS_STALE_AFTER_MS`: the feed may be missing recent events. */
   stale: z.boolean(),
+  /**
+   * The feed's depth as the worker last enforced it (`T044`, `FR-029`): `days`
+   * kept and the cut of that pass, or `days: null` — nothing is deleted.
+   * `null` — no retention pass has reported yet, so no depth is named.
+   */
+  retention: feedRetentionSchema.nullable(),
 })
 
 export type ListEventsResponse = z.infer<typeof listEventsResponseSchema>

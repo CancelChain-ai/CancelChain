@@ -59,6 +59,11 @@ function app(events: Partial<AppDeps['events']> = {}) {
     events: {
       feed: async () => TRACKED,
       aliveAt: async () => '2026-10-03T12:00:15.000Z',
+      retention: async () => ({
+        enforced: true,
+        days: 90,
+        keptSince: '2026-07-05T12:00:00.000Z',
+      }),
       now: () => NOW,
       ...events,
     },
@@ -108,6 +113,7 @@ describe('GET /v1/allowances/:pda/events', () => {
     expect(listEventsResponseSchema.parse(body)).toEqual({
       ...TRACKED,
       syncedAt: '2026-10-03T12:00:15.000Z',
+      retention: { enforced: true, days: 90, keptSince: '2026-07-05T12:00:00.000Z' },
       stale: false,
     })
   })
@@ -146,6 +152,22 @@ describe('GET /v1/allowances/:pda/events', () => {
   it('stale, with no time to show, when the indexer never ran', async () => {
     const { body } = await get(app({ aliveAt: async () => null }))
     expect(body).toMatchObject({ stale: true, syncedAt: null })
+  })
+
+  it('names the depth the worker last enforced (T044, FR-029)', async () => {
+    const { body } = await get(app())
+    expect(body).toMatchObject({
+      retention: { enforced: true, days: 90, keptSince: '2026-07-05T12:00:00.000Z' },
+    })
+  })
+
+  it('says when nothing is deleted, and when no retention pass has reported yet', async () => {
+    expect((await get(app({ retention: async () => ({ enforced: false }) }))).body).toMatchObject({
+      retention: { enforced: false },
+    })
+    expect((await get(app({ retention: async () => null }))).body).toMatchObject({
+      retention: null,
+    })
   })
 
   it('a cursor the feed did not issue is the client’s mistake: 400, not 500', async () => {

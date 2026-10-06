@@ -43,6 +43,7 @@ describe('migration', () => {
       'indexer_cursor',
       'indexer_heartbeat',
       'push_deliveries',
+      'events_retention',
     ]) {
       expect(migrations, table).toContain(`CREATE TABLE "${table}"`)
     }
@@ -71,6 +72,12 @@ describe('migration', () => {
       'FOREIGN KEY ("subscription_id") REFERENCES "public"."push_subscriptions"("id") ON DELETE cascade',
     )
     expect(migrations).toContain('PRIMARY KEY("subscription_id","kind","ref")')
+  })
+
+  it('refuses a retention window shorter than FR-029 promises (T044)', () => {
+    expect(migrations).toContain(
+      '"events_retention"."days" is null or "events_retention"."days" >= 90',
+    )
   })
 
   it('carries every value of every finite list into a CHECK', () => {

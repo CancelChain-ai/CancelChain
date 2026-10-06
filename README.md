@@ -75,7 +75,13 @@ Said plainly, because a demo creates a false sense of proof if it is not:
   its heartbeat is fresh; the card does not show it yet and still lists the address's
   transactions. A permission closed before the indexer first saw it gets no history:
   there is nothing left on chain to describe it.
-- **Nothing is hosted.** Everything runs on a laptop.
+- **Nothing is hosted.** Everything runs on a laptop. The intended host is one free Render
+  web service with the indexer inside the API process (`RUN_INDEXER=true`), woken every
+  five minutes by an uptime monitor on `HEAD /health`; that deployment does not exist yet.
+- **The feed keeps 90 days.** Older events are deleted from our store once a day
+  (`EVENTS_RETENTION_DAYS`, never fewer than 90); the card names that depth and, where a
+  permission's history is cut, the date of the cut with a link to the full trail on the
+  network.
 - **Push reaches only browsers that have Web Push.** Checked end to end in Chrome through
   Google's push service. iOS delivers Web Push only to a web app added to the home
   screen, and this page is not set up as one; Safari there shows the switch as

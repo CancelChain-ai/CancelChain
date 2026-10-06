@@ -13,6 +13,8 @@ import {
   capSentence,
   cardFields,
   type FeedEvent,
+  type FeedRetentionView,
+  feedDepthSentence,
   feedLine,
   feedStaleSentence,
   feedTruncationSentence,
@@ -477,6 +479,18 @@ const FeedEnd = ({
   ) : null
 }
 
+/**
+ * How deep the feed goes (`T044`, `FR-029`), named on every tracked feed — not
+ * only where this permission reaches the cut. No link of its own: the cut and
+ * the stale note carry it where there is something older to go and see.
+ */
+const FeedDepth = ({ retention }: { retention: FeedRetentionView | null }) =>
+  retention === null ? null : (
+    <p className="mt-2 max-w-[520px] text-[12px] leading-relaxed text-ink/45">
+      {feedDepthSentence(retention)}
+    </p>
+  )
+
 const Activity = ({
   detail,
   feed,
@@ -531,6 +545,7 @@ const Activity = ({
             hasEvents={feed.events.length > 0}
             networkUrl={networkUrl}
           />
+          <FeedDepth retention={feed.retention} />
         </>
       )}
     </>

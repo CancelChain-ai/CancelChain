@@ -486,7 +486,12 @@ export interface EventPageView {
   syncedAt: Date | null
   /** The heartbeat is too old to vouch for the newest events. */
   stale: boolean
+  /** The depth the store keeps (`T044`, `FR-029`); `null` — none reported yet. */
+  retention: FeedRetentionView | null
 }
+
+/** `days: null` — nothing is deleted; every indexed event stays. */
+export type FeedRetentionView = { days: number; keptSince: Date } | { days: null }
 
 export function eventPageFromResponse(response: ListEventsResponse): EventPageView {
   return {
@@ -505,6 +510,12 @@ export function eventPageFromResponse(response: ListEventsResponse): EventPageVi
     truncatedAt: dateOrNull(response.truncatedAt),
     syncedAt: dateOrNull(response.syncedAt),
     stale: response.stale,
+    retention:
+      response.retention === null
+        ? null
+        : response.retention.enforced
+          ? { days: response.retention.days, keptSince: new Date(response.retention.keptSince) }
+          : { days: null },
   }
 }
 
@@ -560,6 +571,16 @@ export function feedStaleSentence(syncedAt: Date | null, now: Date): string {
   const sameDay = syncedAt.toDateString() === now.toDateString()
   const when = sameDay ? `at ${formatClock(syncedAt)}` : `on ${dayAndClock(syncedAt)}`
   return `This feed was last confirmed ${when} — the newest events may be missing.`
+}
+
+/**
+ * The depth of the feed, named whether or not this permission reaches it
+ * (`T044`, `FR-029`: "names this depth in the interface").
+ */
+export function feedDepthSentence(retention: FeedRetentionView): string {
+  return retention.days === null
+    ? 'CancelChain keeps every event it has indexed.'
+    : `CancelChain keeps the last ${retention.days} days of events — anything older is only on the network.`
 }
 
 /** The cut at the end of the feed (`T041a`; `T044` reuses it for the retention window). */

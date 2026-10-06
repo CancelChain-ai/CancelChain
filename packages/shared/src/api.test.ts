@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  feedRetentionSchema,
   getAllowanceQuerySchema,
   latestBlockhashResponseSchema,
   listAllowancesQuerySchema,
@@ -315,5 +316,21 @@ describe('sign-in message', () => {
 
   it('keeps the signature window shorter than the token it buys', () => {
     expect(SIGN_IN_MAX_AGE_SECONDS).toBeLessThan(MERCHANT_JWT_TTL_SECONDS)
+  })
+})
+
+describe('feedRetentionSchema (T044)', () => {
+  it('takes the depth with its cut, or nothing enforced', () => {
+    const cut = { enforced: true, days: 90, keptSince: '2026-07-05T12:00:00.000Z' }
+    expect(feedRetentionSchema.parse(cut)).toEqual(cut)
+    expect(feedRetentionSchema.parse({ enforced: false })).toEqual({ enforced: false })
+  })
+
+  it('refuses a depth shorter than FR-029, and a depth without its cut', () => {
+    expect(
+      feedRetentionSchema.safeParse({ enforced: true, days: 30, keptSince: '2026-09-05T12:00:00Z' })
+        .success,
+    ).toBe(false)
+    expect(feedRetentionSchema.safeParse({ enforced: true, days: 90 }).success).toBe(false)
   })
 })

@@ -7,10 +7,12 @@ import type { AppEnv } from '../types.js'
  *
  * Ручка робить дві різні речі, і їх варто не плутати:
  *
- * `ok` — **досяжність залежностей** (Postgres відповідає, RPC відповідає). Саме
- * це питає healthcheck Railway і keep-alive-пінг раз на 14 хв (`T044`), тож
- * порожня база тут не привід відповідати «нездоровий»: щойно розгорнутий сервіс
- * із порожнім кешем працює правильно.
+ * `ok` — reachability of what this process depends on (Postgres, the RPC).
+ * This is what the host's health check and the uptime monitor that keeps the
+ * free web service awake ask (`T044`: every 5 minutes, `HEAD` or `GET`), so an
+ * empty cache is no reason to answer "unhealthy": a fresh deployment with an
+ * empty cache works correctly. An in-process indexer that stops takes the
+ * process down with it (`index.ts`), so it never shows here as a healthy API.
  *
  * `lagSeconds` — **вік найсвіжішого кешованого стану**: скільки секунд минуло з
  * моменту, коли наш знімок мережі востаннє був актуальним (позначка курсора

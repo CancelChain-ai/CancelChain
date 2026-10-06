@@ -450,6 +450,7 @@ describe('the feed of one permission', () => {
         event({ id: '1', kind: 'created', amount: null }),
       ],
       truncatedAt: null,
+      retention: { days: 90, keptSince: new Date(NOW.getTime() - 90 * 86_400_000) },
       older: { status: 'all' },
       ...over,
     }
@@ -514,6 +515,23 @@ describe('the feed of one permission', () => {
     expect(screen.getByText('Charge refused')).toBeTruthy()
     const link = screen.getByRole('link', { name: 'See the address on the network' })
     expect(link.getAttribute('href')).toBe(ADDRESS_URL)
+  })
+
+  it('names how deep the feed goes, cut or not (T044, FR-029)', () => {
+    withFeed(tracked())
+    expect(screen.getByText(/keeps the last 90 days of events/)).toBeTruthy()
+    cleanup()
+    withFeed(tracked({ retention: { days: null } }))
+    expect(screen.getByText('CancelChain keeps every event it has indexed.')).toBeTruthy()
+    cleanup()
+    withFeed(tracked({ retention: null }))
+    expect(screen.queryByText(/CancelChain keeps/)).toBeNull()
+  })
+
+  it('names the depth under the cut as well', () => {
+    withFeed(tracked({ truncatedAt: new Date(2026, 8, 1, 12, 0) }))
+    expect(screen.getByText(/keeps nothing earlier than 1 Sep 2026/)).toBeTruthy()
+    expect(screen.getByText(/keeps the last 90 days of events/)).toBeTruthy()
   })
 
   it('says nothing about freshness when the indexer vouches for the feed', () => {

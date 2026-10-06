@@ -305,6 +305,7 @@ describe('the events of one allowance', () => {
     tracked: false,
     syncedAt: '2026-09-03T10:00:00.000Z',
     stale: false,
+    retention: { enforced: false },
   }
 
   it('asks for the newest page without a cursor', async () => {

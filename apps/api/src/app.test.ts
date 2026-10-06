@@ -41,6 +41,7 @@ function app(overrides: Partial<AppDeps> = {}) {
     events: {
       feed: async () => ({ tracked: false, items: [], nextCursor: null, truncatedAt: null }),
       aliveAt: async () => null,
+      retention: async () => null,
     },
     stream: { hub: idleHub() },
     signatures: {
@@ -79,6 +80,12 @@ function app(overrides: Partial<AppDeps> = {}) {
 }
 
 describe('GET /health', () => {
+  it('answers HEAD too — an uptime monitor wakes the free service with it (T044)', async () => {
+    const res = await app().request('/health', { method: 'HEAD' })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toBe('')
+  })
+
   it('віддає рівно ту форму, яку описує healthResponseSchema зі shared', async () => {
     const res = await app().request('/health')
     expect(res.status).toBe(200)

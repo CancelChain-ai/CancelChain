@@ -67,6 +67,12 @@ export const apiConfigSchema = z.object({
    * `https://` і шлях у підписі SIWS не пишуться.
    */
   authDomain: z.string().default(''),
+  /**
+   * Run the indexer inside this process (`T044`): API and worker on a single
+   * free web service. The worker then reads its own variables from the same
+   * environment (`EVENTS_RETENTION_DAYS`, `PUSH_UPCOMING_LEAD_HOURS`, …).
+   */
+  runIndexer: z.boolean().default(false),
 })
 
 export type ApiConfig = z.infer<typeof apiConfigSchema>
@@ -169,5 +175,6 @@ export function apiConfigFromEnv(env: Record<string, string | undefined>): ApiCo
     corsOrigins: originsFromEnv(env.CORS_ORIGINS),
     jwtSecret: env.JWT_SECRET,
     authDomain: env.AUTH_DOMAIN,
+    runIndexer: boolFromEnv(env.RUN_INDEXER),
   })
 }

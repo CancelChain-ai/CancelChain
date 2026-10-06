@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "main": "./src/index.ts",
+  "main": "./src/worker.ts",
   "scripts": {
     "dev": "tsx watch --env-file-if-exists=../../.env src/index.ts",
     "start": "tsx src/index.ts",
@@ -29,5 +29,8 @@
     "tsx": "4.23.13",
     "typescript": "5.9.3",
     "vitest": "4.1.11"
+  },
+  "exports": {
+    ".": "./src/worker.ts"
   }
 }

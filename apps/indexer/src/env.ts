@@ -1,6 +1,7 @@
 import { type ChainConfig, chainConfigFromEnv } from '@cancelchain/chain'
 import { assertPooledDatabaseUrl, postgresUrl } from '@cancelchain/db'
 import { z } from 'zod'
+import { MIN_RETENTION_DAYS } from './retention.js'
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const
 
@@ -29,6 +30,20 @@ const indexerEnvSchema = z.object({
     .positive()
     .max(24 * 30)
     .default(24),
+  /**
+   * The feed's depth (`T044`, `FR-029`): whole days, at least 90, or `off` to
+   * keep every indexed event. On by default — the store is a cache of public
+   * chain history, and the free tier is 500 MB.
+   */
+  eventsRetentionDays: z
+    .union([
+      z.literal('off').transform(() => null),
+      z.coerce
+        .number()
+        .int()
+        .min(MIN_RETENTION_DAYS, `FR-029 promises at least ${MIN_RETENTION_DAYS} days of feed`),
+    ])
+    .default(MIN_RETENTION_DAYS),
 })
 
 export type IndexerConfig = z.infer<typeof indexerEnvSchema> & { chain: ChainConfig }
@@ -42,6 +57,7 @@ export function indexerConfigFromEnv(env: Record<string, string | undefined>): I
     allowDirectDatabase: env.ALLOW_DIRECT_DATABASE === '' ? undefined : env.ALLOW_DIRECT_DATABASE,
     pushUpcomingLeadHours:
       env.PUSH_UPCOMING_LEAD_HOURS === '' ? undefined : env.PUSH_UPCOMING_LEAD_HOURS,
+    eventsRetentionDays: env.EVENTS_RETENTION_DAYS === '' ? undefined : env.EVENTS_RETENTION_DAYS,
   })
   assertPooledDatabaseUrl(own.databaseUrl, own.allowDirectDatabase)
   return { ...own, chain: chainConfigFromEnv(env) }

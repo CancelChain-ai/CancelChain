@@ -10,6 +10,7 @@ import {
   verifyWalletSignature,
 } from '@cancelchain/chain'
 import { plans, STREAM_CHANNEL } from '@cancelchain/db'
+import { indexerConfigFromEnv, startIndexer } from '@cancelchain/indexer'
 import { createPushSender, vapidFromEnv, welcomeMessage } from '@cancelchain/push'
 import type { Plan } from '@cancelchain/shared'
 import { fromU64, planSchema, toU64 } from '@cancelchain/shared'
@@ -19,12 +20,13 @@ import { createApp } from './app.js'
 import { readCachedAllowance } from './cache.js'
 import { createDb, type Db, listenConnection } from './db.js'
 import { apiConfigFromEnv, listenDatabaseUrl, merchantAuthConfig } from './env.js'
-import { heartbeatAt, readEvent, readFeed } from './feed.js'
+import { heartbeatAt, readEvent, readFeed, readRetention } from './feed.js'
 import { startListener } from './listen.js'
 import { createLogger } from './logger.js'
 import { hasPushSubscription, removePushSubscriptions, savePushSubscription } from './push.js'
 import type { PushDeps } from './routes/push.js'
 import { createStreamHub } from './stream.js'
+import { superviseIndexer } from './supervise.js'
 
 /**
  * Точка входу сервісу. Усе, що тут відбувається, — читання оточення, створення
@@ -75,7 +77,7 @@ async function catalogPlan(db: Db, pda: string): Promise<Plan | null> {
   })
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const startedAt = Date.now()
   const config = apiConfigFromEnv(process.env)
   const logger = createLogger(config.logLevel)
@@ -155,6 +157,7 @@ function main(): void {
     events: {
       feed: (pda, page) => readFeed(database.db, pda, page),
       aliveAt: () => heartbeatAt(database.db),
+      retention: () => readRetention(database.db),
     },
     stream: { hub },
     push,
@@ -209,6 +212,17 @@ function main(): void {
     },
   })
 
+  // One free web service for both (`T044`): the indexer starts in this process,
+  // before the server binds, so a health check never sees an API whose worker
+  // is still missing. Its own pool, its own logger name.
+  const indexer = config.runIndexer
+    ? await startIndexer({
+        config: indexerConfigFromEnv(process.env),
+        vapid,
+        log: createLogger(config.logLevel, { service: 'indexer' }),
+      })
+    : null
+
   const server = serve({ fetch: app.fetch, port: config.port, hostname: '0.0.0.0' }, (info) => {
     logger.info({ port: info.port, cluster: chain.cluster }, 'api listening')
   })
@@ -226,19 +240,34 @@ function main(): void {
 
   // Railway надсилає SIGTERM при перевикатці. Без цього пул до пулера лишається
   // відкритим до таймауту, а конекшенів на free tier усього два.
+  let stopping = false
+  const shutdown = (code: number) => {
+    if (stopping) return
+    stopping = true
+    // Open streams would keep `server.close` waiting forever: end them first.
+    hub.close()
+    server.close(() => {
+      void listener
+        .stop()
+        .then(() => indexer?.stop())
+        .then(() => database.close())
+        .finally(() => process.exit(code))
+    })
+  }
   for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     process.once(signal, () => {
       logger.info({ signal }, 'shutting down')
-      // Open streams would keep `server.close` waiting forever: end them first.
-      hub.close()
-      server.close(() => {
-        void listener
-          .stop()
-          .then(() => database.close())
-          .finally(() => process.exit(0))
-      })
+      shutdown(0)
+    })
+  }
+  if (indexer !== null) {
+    superviseIndexer({
+      done: indexer.done,
+      isStopping: () => stopping,
+      logger,
+      onFatal: () => shutdown(1),
     })
   }
 }
 
-main()
+await main()

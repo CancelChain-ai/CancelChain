@@ -360,6 +360,7 @@ describe('the feed behind one allowance', () => {
           tracked: true,
           syncedAt: null,
           stale: true,
+          retention: null,
         })
       },
       getPlan: () => Promise.reject(new Error('the feed tests do not read a plan')),

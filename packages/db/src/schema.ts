@@ -292,6 +292,35 @@ export const indexerHeartbeat = pgTable('indexer_heartbeat', {
   aliveAt: moment('alive_at').notNull(),
 })
 
+/**
+ * What the retention step actually did (`T044`, `FR-029`): written by the worker
+ * after every pass, read by the API for the feed. Like the heartbeat, it says
+ * what happened, not what the configuration promises — a stopped worker or two
+ * services configured differently cannot make the page name a depth nobody
+ * enforces.
+ *
+ * `days: null` — retention is off and every indexed event is kept;
+ * `kept_since` is then `null` as well.
+ */
+export const eventsRetention = pgTable(
+  'events_retention',
+  {
+    name: text('name').primaryKey(),
+    days: integer('days'),
+    /** Nothing older than this is kept: the cut of the last pass. */
+    keptSince: moment('kept_since'),
+    ranAt: moment('ran_at').notNull(),
+  },
+  (table) => [
+    // `FR-029` promises at least 90 days; a shorter window is not a setting.
+    check('events_retention_days_floor', sql`${table.days} is null or ${table.days} >= 90`),
+    check(
+      'events_retention_cut_matches_days',
+      sql`(${table.days} is null) = (${table.keptSince} is null)`,
+    ),
+  ],
+)
+
 export type MerchantRow = typeof merchants.$inferSelect
 export type PlanRow = typeof plans.$inferSelect
 export type AllowanceRow = typeof allowances.$inferSelect

@@ -45,6 +45,7 @@ function page(over: Partial<EventPageView> = {}): EventPageView {
     truncatedAt: null,
     syncedAt: NOW,
     stale: false,
+    retention: { days: 90, keptSince: new Date(NOW.getTime() - 90 * 86_400_000) },
     ...over,
   }
 }
@@ -104,6 +105,33 @@ describe('useFeed', () => {
     expect(state.events.map((e) => e.id)).toEqual(['3', '1'])
     expect(state.truncatedAt?.toISOString()).toBe('2026-09-01T00:00:00.000Z')
     expect(mocks.getEvents).toHaveBeenLastCalledWith(PDA, 'c1', expect.anything())
+  })
+
+  it('takes the depth from the newest page — the freshest word on it (T044)', async () => {
+    const fresh = { days: 120, keptSince: new Date('2026-06-05T10:00:00.000Z') }
+    mocks.getEvents.mockImplementation((_id, cursor) =>
+      Promise.resolve(
+        cursor === null
+          ? page({ events: [event('3')], nextCursor: 'c1', retention: fresh })
+          : page({ events: [event('1')], retention: null }),
+      ),
+    )
+    const { result } = renderHook(() => useFeed(PDA), { wrapper })
+    await waitFor(() => expect(result.current.status).toBe('tracked'))
+    const first = result.current
+    if (first.status !== 'tracked' || first.older.status !== 'more') {
+      throw new Error('expected older events to load')
+    }
+    expect(first.retention).toEqual(fresh)
+    const { load } = first.older
+    act(() => load())
+    await waitFor(() => {
+      const state = result.current
+      expect(state.status === 'tracked' && state.older.status).toBe('all')
+    })
+    const state = result.current
+    if (state.status !== 'tracked') throw new Error('expected a tracked feed')
+    expect(state.retention).toEqual(fresh)
   })
 
   it('falls back to the address history for a permission the indexer has not seen', async () => {

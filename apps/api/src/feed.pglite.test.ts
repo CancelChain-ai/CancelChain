@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { allowances, events, indexerHeartbeat, type NewEvent } from '@cancelchain/db'
+import {
+  allowances,
+  events,
+  eventsRetention,
+  indexerHeartbeat,
+  type NewEvent,
+} from '@cancelchain/db'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -11,6 +17,7 @@ import {
   heartbeatAt,
   InvalidCursorError,
   readFeed,
+  readRetention,
 } from './feed.js'
 
 /**
@@ -230,5 +237,31 @@ describe('heartbeatAt', () => {
       .insert(indexerHeartbeat)
       .values({ name: 'program-logs', aliveAt: '2026-10-03T12:00:15Z' })
     expect(await heartbeatAt(db)).toBe('2026-10-03T12:00:15.000Z')
+  })
+})
+
+describe('readRetention (T044)', () => {
+  it('null before any pass, then the depth and the cut the worker wrote', async () => {
+    await db.delete(eventsRetention)
+    expect(await readRetention(db)).toBeNull()
+    await db.insert(eventsRetention).values({
+      name: 'events',
+      days: 90,
+      keptSince: '2026-07-05T12:00:00Z',
+      ranAt: '2026-10-03T12:00:00Z',
+    })
+    expect(await readRetention(db)).toEqual({
+      enforced: true,
+      days: 90,
+      keptSince: '2026-07-05T12:00:00.000Z',
+    })
+  })
+
+  it('says nothing is deleted when the worker runs with retention off', async () => {
+    await db.delete(eventsRetention)
+    await db
+      .insert(eventsRetention)
+      .values({ name: 'events', days: null, keptSince: null, ranAt: '2026-10-03T12:00:00Z' })
+    expect(await readRetention(db)).toEqual({ enforced: false })
   })
 })

@@ -55,6 +55,13 @@ describe('apiConfigSchema', () => {
       false,
     )
   })
+
+  it('runs the indexer in this process only when asked to (T044)', () => {
+    const base = { DATABASE_URL: POOLED }
+    expect(apiConfigFromEnv(base).runIndexer).toBe(false)
+    expect(apiConfigFromEnv({ ...base, RUN_INDEXER: 'true' }).runIndexer).toBe(true)
+    expect(apiConfigFromEnv({ ...base, RUN_INDEXER: 'false' }).runIndexer).toBe(false)
+  })
 })
 
 describe('databasePort', () => {

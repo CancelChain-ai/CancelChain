@@ -31,6 +31,17 @@ describe('indexerConfigFromEnv', () => {
     expect(() => indexerConfigFromEnv({ ...CHAIN, PUSH_UPCOMING_LEAD_HOURS: 'soon' })).toThrow()
   })
 
+  it('keeps 90 days of feed unless told otherwise, and never fewer (T044, FR-029)', () => {
+    const days = (value: string) =>
+      indexerConfigFromEnv({ ...CHAIN, EVENTS_RETENTION_DAYS: value }).eventsRetentionDays
+    expect(indexerConfigFromEnv(CHAIN).eventsRetentionDays).toBe(90)
+    expect(days('')).toBe(90)
+    expect(days('180')).toBe(180)
+    expect(days('off')).toBeNull()
+    expect(() => days('30')).toThrow(/FR-029/)
+    expect(() => days('90.5')).toThrow()
+  })
+
   it('refuses anything but true or false', () => {
     expect(() => indexerConfigFromEnv({ ...CHAIN, INDEXER_USE_WS: '0' })).toThrow()
   })

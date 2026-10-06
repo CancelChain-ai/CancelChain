@@ -723,7 +723,9 @@ describe('eventPageFromResponse', () => {
       tracked: true,
       syncedAt: '2026-09-03T10:00:00.000Z',
       stale: false,
+      retention: { enforced: true, days: 90, keptSince: '2026-06-05T10:00:00.000Z' },
     })
+    expect(page.retention).toEqual({ days: 90, keptSince: new Date('2026-06-05T10:00:00.000Z') })
     expect(page.events[0]?.chargesStopAt?.toISOString()).toBe('2026-10-28T17:07:00.000Z')
     expect(page.events[0]?.amount).toBeNull()
     expect(page.syncedAt?.toISOString()).toBe('2026-09-03T10:00:00.000Z')

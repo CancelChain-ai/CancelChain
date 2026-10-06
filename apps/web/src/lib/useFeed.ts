@@ -2,7 +2,7 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { describeFailure } from './api.js'
 import { source } from './source.js'
 import { type HistoryState, useHistory } from './useHistory.js'
-import type { EventPageView, FeedEvent } from './view.js'
+import type { EventPageView, FeedEvent, FeedRetentionView } from './view.js'
 
 /**
  * The card's feed (`T041a`, `FR-005`): the indexer's events of the permission,
@@ -41,6 +41,8 @@ export type FeedState =
       events: FeedEvent[]
       /** From the last loaded page; shown only once nothing older is left to load. */
       truncatedAt: Date | null
+      /** The store's depth (`T044`), from the first page — the freshest word on it. */
+      retention: FeedRetentionView | null
       older: OlderState
     }
 
@@ -91,6 +93,7 @@ export function useFeed(id: string | null): FeedState {
     freshness,
     events: pages.flatMap((page) => page.events),
     truncatedAt: pages.at(-1)?.truncatedAt ?? null,
+    retention: first.retention,
     older,
   }
 }
