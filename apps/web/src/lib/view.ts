@@ -133,9 +133,16 @@ export function formatDay(date: Date): string {
   return `${date.getDate()} ${MONTHS[date.getMonth()] ?? '?'} ${date.getFullYear()}`
 }
 
-/** `'6 Sep 2026'` → `'6 Sep'`. Повна дата лишається на екрані картки. */
-export function shortDay(date: Date): string {
-  return `${date.getDate()} ${MONTHS[date.getMonth()] ?? '?'}`
+/**
+ * `'6 Sep 2026'` → `'6 Sep'`. The full date stays on the card's own screen.
+ *
+ * The year is dropped only within the current one: "Expires 7 Oct" on a permission
+ * that runs out a year from now reads as "expires today".
+ */
+export function shortDay(date: Date, now: Date = new Date()): string {
+  return date.getFullYear() === now.getFullYear()
+    ? `${date.getDate()} ${MONTHS[date.getMonth()] ?? '?'}`
+    : formatDay(date)
 }
 
 /** Час у стилі решти екранів: `20:12`. Місцевий, як і дати. */

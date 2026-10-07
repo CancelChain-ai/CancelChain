@@ -134,7 +134,14 @@ describe('formatMoney', () => {
 describe('formatDay', () => {
   it('writes the date the way the rest of the screens do', () => {
     expect(formatDay(new Date(2026, 8, 6))).toBe('6 Sep 2026')
-    expect(shortDay(new Date(2026, 8, 6))).toBe('6 Sep')
+    expect(shortDay(new Date(2026, 8, 6), new Date(2026, 0, 1))).toBe('6 Sep')
+  })
+
+  it('keeps the year on a short date outside the current one', () => {
+    // A permission granted on 7 Oct 2026 for a year: "Expires 7 Oct" would read as today.
+    const now = new Date(2026, 9, 7)
+    expect(shortDay(new Date(2027, 9, 7), now)).toBe('7 Oct 2027')
+    expect(shortDay(new Date(2025, 11, 30), now)).toBe('30 Dec 2025')
   })
 })
 
