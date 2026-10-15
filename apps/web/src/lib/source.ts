@@ -6,8 +6,10 @@ import {
   ApiRequestError,
   createApiClient,
   type GetAllowanceResponse,
+  type ListAllowancesResponse,
 } from './api.js'
 import { PERMISSIONS, type Permission } from './mockData.js'
+import { type ListStore, storedLists } from './storedList.js'
 import {
   type AddressHistoryView,
   type AllowanceDetailView,
@@ -87,6 +89,11 @@ export interface AllowanceSource {
     signal?: AbortSignal,
     minSlot?: number,
   ): Promise<AllowanceList>
+  /**
+   * The list this browser last read for the wallet (`SC-008`), or `null`. Shown
+   * only until the network answers, and marked as a copy while it is.
+   */
+  storedList(owner: Address): AllowanceList | null
   /**
    * Один дозвіл для екрана картки (`T024`).
    *
@@ -172,6 +179,8 @@ export function createMockSource(): AllowanceSource {
         // Вигаданих даних, яких не вдалося прочитати, не буває.
         unreadable: [],
       }),
+    // Invented data has nothing worth keeping between visits.
+    storedList: () => null,
     getAllowance: (id) => {
       const permission = mockData.find(id)
       return Promise.resolve(permission === undefined ? null : detailFromPermission(permission))
@@ -184,7 +193,25 @@ export function createMockSource(): AllowanceSource {
   }
 }
 
-export function createApiSource(client: ApiClient): AllowanceSource {
+/*
+ * Момент відліку — коли мережу **прочитали**, а не коли малюємо. Від нього
+ * залежить `periodElapsed`, і брати тут `new Date()` означало б, що список,
+ * який пролежав на екрані хвилину, судить прочитане іншим годинником.
+ */
+function listFromResponse(response: ListAllowancesResponse): AllowanceList {
+  const readAt = new Date(response.syncedAt)
+  return {
+    items: response.items.map((item) => viewFromAllowance(item, readAt)),
+    syncedAt: response.syncedAt,
+    stale: response.stale,
+    unreadable: response.unreadable,
+  }
+}
+
+export function createApiSource(
+  client: ApiClient,
+  store: ListStore = storedLists,
+): AllowanceSource {
   return {
     kind: 'api',
     actions: {
@@ -213,18 +240,12 @@ export function createApiSource(client: ApiClient): AllowanceSource {
     async listAllowances(owner, signal, minSlot) {
       if (owner === null) throw new WalletRequiredError()
       const response = await client.listAllowances(owner, signal, minSlot)
-      /*
-       * Момент відліку — коли мережу **прочитали**, а не коли малюємо. Від нього
-       * залежить `periodElapsed`, і брати тут `new Date()` означало б, що список,
-       * який пролежав на екрані хвилину, судить прочитане іншим годинником.
-       */
-      const readAt = new Date(response.syncedAt)
-      return {
-        items: response.items.map((item) => viewFromAllowance(item, readAt)),
-        syncedAt: response.syncedAt,
-        stale: response.stale,
-        unreadable: response.unreadable,
-      }
+      store.save(owner, response)
+      return listFromResponse(response)
+    },
+    storedList(owner) {
+      const response = store.read(owner)
+      return response === null ? null : listFromResponse(response)
     },
     async getAllowance(id, signal, minSlot) {
       try {

@@ -1,8 +1,11 @@
 /**
- * CancelChain's service worker — Web Push and nothing else (`T043`).
+ * CancelChain's service worker: Web Push (`T043`) and the app's own files (`SC-008`).
  *
- * No cache and no `fetch` handler: the page is read from the network every
- * time, as before, and nothing here can show a stale permission as current.
+ * The cache holds the page and its `assets/` — never an answer of the API, which
+ * lives on another origin and is not touched here. A returning visit gets the app
+ * from this cache at once and asks the network for a newer one behind it; the
+ * permissions on screen come from the page's own saved copy, which says it is
+ * one (`lib/storedList.ts`), until the network answers.
  *
  * The text arrives written (`packages/push/src/messages.ts`); the one thing the
  * server cannot write is the reader's clock, so `{at}` in the title or the body
@@ -96,10 +99,96 @@ self.addEventListener('notificationclick', (event) => {
   )
 })
 
-// A new version takes over at once: there is no cache to migrate.
-self.addEventListener('install', () => {
+const SHELL_CACHE = 'cancelchain-shell-v1'
+
+/** The files a page names under the worker's `assets/`: its script, preloads and stylesheet. */
+function assetsOf(html, scope) {
+  const found = new Set()
+  for (const match of html.matchAll(/(?:src|href)="([^"]+)"/g)) {
+    const url = new URL(match[1], scope).href
+    if (url.startsWith(`${scope}assets/`)) found.add(url)
+  }
+  return [...found]
+}
+
+/**
+ * The page goes into the cache only with every file it names: a cached page
+ * whose script is missing is a blank screen. A new page also drops the files of
+ * the old one; a lazily loaded file of the new one is fetched again when asked for.
+ */
+async function storeShell(response) {
+  const scope = self.registration.scope
+  const cache = await caches.open(SHELL_CACHE)
+  const html = await response.clone().text()
+  const assets = assetsOf(html, scope)
+  for (const url of assets) {
+    if ((await cache.match(url)) === undefined) await cache.add(url)
+  }
+  const previous = await cache.match(scope)
+  await cache.put(scope, response)
+  if (previous !== undefined && (await previous.text()) !== html) {
+    for (const request of await cache.keys()) {
+      if (request.url !== scope && !assets.includes(request.url)) await cache.delete(request)
+    }
+  }
+}
+
+async function refreshShell() {
+  const response = await fetch(self.registration.scope, { cache: 'no-cache' })
+  if (response.ok) await storeShell(response)
+}
+
+function quietly(promise) {
+  return promise.catch(() => {})
+}
+
+async function shellResponse(event) {
+  const cache = await caches.open(SHELL_CACHE)
+  const cached = await cache.match(self.registration.scope)
+  if (cached !== undefined) {
+    // Seen on the next visit: this one is already drawing the cached version.
+    event.waitUntil(quietly(refreshShell()))
+    return cached
+  }
+  const response = await fetch(event.request)
+  if (response.ok) event.waitUntil(quietly(storeShell(response.clone())))
+  return response
+}
+
+/** Built files carry their hash in the name, so a cached one is never out of date. */
+async function assetResponse(request) {
+  const cache = await caches.open(SHELL_CACHE)
+  const cached = await cache.match(request.url)
+  if (cached !== undefined) return cached
+  const response = await fetch(request)
+  if (response.ok) await quietly(cache.put(request.url, response.clone()))
+  return response
+}
+
+self.addEventListener('fetch', (event) => {
+  const { request } = event
+  const scope = self.registration.scope
+  if (request.method !== 'GET' || !request.url.startsWith(scope)) return
+  const url = new URL(request.url)
+  if (request.mode === 'navigate' && `${url.origin}${url.pathname}` === scope) {
+    event.respondWith(shellResponse(event))
+  } else if (url.pathname.startsWith(new URL(`${scope}assets/`).pathname)) {
+    event.respondWith(assetResponse(request))
+  }
+})
+
+self.addEventListener('install', (event) => {
+  // The first visit is already drawn from the network; this readies the next one.
+  event.waitUntil(quietly(refreshShell()))
   self.skipWaiting()
 })
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim())
+  event.waitUntil(
+    (async () => {
+      for (const name of await caches.keys()) {
+        if (name.startsWith('cancelchain-') && name !== SHELL_CACHE) await caches.delete(name)
+      }
+      await self.clients.claim()
+    })(),
+  )
 })

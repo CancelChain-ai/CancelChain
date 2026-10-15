@@ -24,3 +24,16 @@ createRoot(rootElement).render(
     </WalletProvider>
   </QueryClientProvider>,
 )
+
+/**
+ * The worker (`public/sw.js`) keeps the app's own files for the next visit
+ * (`SC-008`). Registered after `load`, so it never competes with this visit for
+ * the network, and only in a build: in development it would serve stale modules.
+ */
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    const scope = import.meta.env.BASE_URL
+    // No worker is a slower next visit, not a broken one.
+    navigator.serviceWorker.register(`${scope}sw.js`, { scope }).catch(() => {})
+  })
+}

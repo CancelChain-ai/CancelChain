@@ -4,6 +4,7 @@ import AllowanceCard, { type CancelNotice, NOTICE_STYLES } from '../components/A
 import { LiveStatus } from '../components/LiveStatus'
 import { PushSwitch } from '../components/PushSwitch'
 import type { AllowanceList } from '../lib/source'
+import type { ListDivergence } from '../lib/storedList'
 import type { AllowancesState } from '../lib/useAllowances'
 import type { PushControls } from '../lib/usePush'
 import type { LiveState } from '../lib/useStream'
@@ -143,16 +144,43 @@ function periodClause(items: readonly AllowanceView[]): string | null {
   return only === null ? 'one-off, not per period' : everyPeriod(only)
 }
 
+/** A copy from an earlier day carries its day: "09:00" alone reads as this morning. */
+export function copyMoment(date: Date, now: Date = new Date()): string {
+  return date.toDateString() === now.toDateString()
+    ? formatClock(date)
+    : `${shortDay(date, now)}, ${formatClock(date)}`
+}
+
+function count(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+export function divergenceSentence(savedAt: Date, divergence: ListDivergence): string {
+  const parts = [
+    divergence.gone > 0 && `${count(divergence.gone, 'permission', 'permissions')} gone`,
+    divergence.added > 0 && `${count(divergence.added, 'permission', 'permissions')} new`,
+    divergence.changed > 0 && `${count(divergence.changed, 'permission', 'permissions')} changed`,
+  ].filter((part) => part !== false)
+  return (
+    `The network differs from the copy saved at ${copyMoment(savedAt)}: ${parts.join(', ')}. ` +
+    "What is shown now is the network's."
+  )
+}
+
 const Header = ({
   list,
   walletLabel,
   onNetwork,
+  savedCopy,
+  refreshing,
   live,
   push,
 }: {
   list: AllowanceList
   walletLabel: string | null
   onNetwork: boolean
+  savedCopy: boolean
+  refreshing: boolean
   live: LiveState
   push: PushControls | null
 }) => {
@@ -179,10 +207,17 @@ const Header = ({
       </div>
       <div className="flex flex-col gap-1 text-[13px] text-ink/55 sm:items-end sm:pt-1">
         {walletLabel !== null && <span className="tnum">Wallet {walletLabel}</span>}
-        <span className="text-[12px] text-ink/45 tnum">
-          {onNetwork ? 'Read from the network at ' : 'Invented data, generated at '}
-          {formatClock(new Date(list.syncedAt))}
-        </span>
+        {savedCopy ? (
+          <span className="text-[12px] text-amber tnum">
+            Saved in this browser, as of {copyMoment(new Date(list.syncedAt))}
+            {refreshing ? ' — re-reading the network…' : '.'}
+          </span>
+        ) : (
+          <span className="text-[12px] text-ink/45 tnum">
+            {onNetwork ? 'Read from the network at ' : 'Invented data, generated at '}
+            {formatClock(new Date(list.syncedAt))}
+          </span>
+        )}
         <LiveStatus state={live} className="max-w-[320px] sm:text-right" />
         <PushSwitch push={push} className="mt-2 max-w-[320px] sm:text-right" />
         {list.stale && (
@@ -421,7 +456,24 @@ const Subscriptions = ({
 
   return (
     <div>
-      <Header list={list} walletLabel={walletLabel} onNetwork={onNetwork} live={live} push={push} />
+      <Header
+        list={list}
+        walletLabel={walletLabel}
+        onNetwork={onNetwork}
+        savedCopy={state.savedCopy}
+        refreshing={state.refreshing}
+        live={live}
+        push={push}
+      />
+
+      {state.sinceSavedCopy !== null && (
+        <p className="mt-6 text-[12px] leading-relaxed text-amber">
+          {divergenceSentence(
+            new Date(state.sinceSavedCopy.savedAt),
+            state.sinceSavedCopy.divergence,
+          )}
+        </p>
+      )}
 
       {state.refreshFailed !== null && (
         <p className="mt-6 text-[12px] leading-relaxed text-rust">

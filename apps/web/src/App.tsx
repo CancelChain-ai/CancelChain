@@ -1,6 +1,5 @@
-import { useState } from 'react'
+import { lazy, Suspense, useState } from 'react'
 import { CancelFlow } from './chain/revoke'
-import { SubscribeFlow } from './chain/subscribe'
 import { WalletMenu } from './chain/WalletMenu'
 import { useWalletEnvironment } from './chain/WalletProvider'
 import { explorerAddressUrl, explorerTxUrl, shortenAddress, useWalletOwner } from './chain/wallet'
@@ -11,11 +10,12 @@ import { useAllowances } from './lib/useAllowances'
 import { useFeed } from './lib/useFeed'
 import { usePush } from './lib/usePush'
 import { useStream } from './lib/useStream'
-import { useSubscribeReview } from './lib/useSubscribeReview'
-import Merchant from './pages/Merchant'
-import Subscribe, { LiveSubscribe } from './pages/Subscribe'
-import Subscription from './pages/Subscription'
 import Subscriptions from './pages/Subscriptions'
+
+const Subscription = lazy(() => import('./pages/Subscription'))
+const Subscribe = lazy(() => import('./pages/Subscribe'))
+const SubscribeView = lazy(() => import('./SubscribeView'))
+const Merchant = lazy(() => import('./pages/Merchant'))
 
 type View = 'subscriptions' | 'detail' | 'subscribe' | 'merchant'
 
@@ -99,7 +99,6 @@ const App = () => {
    * feed may fail without taking the five fields of `FR-002` with it.
    */
   const feed = useFeed(selectedId)
-  const subscribeReview = useSubscribeReview(planPda, owner)
   /**
    * One stream for the whole page (`T042a`): it re-reads whatever the open
    * screen shows, and the screens only say whether it is running.
@@ -222,31 +221,15 @@ const App = () => {
       </header>
 
       <main className="mx-auto max-w-[1080px] px-5 py-10 sm:px-8 sm:py-14">
-        {source.onNetwork && MOCK_ONLY_VIEWS.includes(view) && (
-          <p className="mb-8 rounded-[10px] border border-dashed border-hairline px-4 py-3 text-[12px] text-ink/55">
-            This screen is still the M0 prototype: invented merchants, invented numbers, nothing
-            read from {cluster}. Only the list of permissions is live.
-          </p>
-        )}
+        <Suspense fallback={<p className="text-[13px] text-ink/55">Loading this screen…</p>}>
+          {source.onNetwork && MOCK_ONLY_VIEWS.includes(view) && (
+            <p className="mb-8 rounded-[10px] border border-dashed border-hairline px-4 py-3 text-[12px] text-ink/55">
+              This screen is still the M0 prototype: invented merchants, invented numbers, nothing
+              read from {cluster}. Only the list of permissions is live.
+            </p>
+          )}
 
-        {view === 'subscriptions' && (
-          <CancelFlow>
-            {(cancel) => (
-              <Subscriptions
-                state={allowances}
-                walletLabel={walletLabel}
-                onNetwork={source.onNetwork}
-                onOpen={openDetail}
-                cancel={cancel}
-                live={live}
-                push={push}
-              />
-            )}
-          </CancelFlow>
-        )}
-
-        {view === 'detail' &&
-          (selectedId === null ? (
+          {view === 'subscriptions' && (
             <CancelFlow>
               {(cancel) => (
                 <Subscriptions
@@ -260,43 +243,56 @@ const App = () => {
                 />
               )}
             </CancelFlow>
-          ) : (
-            <Subscription
-              state={allowance}
-              onBack={() => setView('subscriptions')}
-              feed={feed}
-              live={live}
-              // Мережу знає оточення гаманця, а не екран картки: посилання
-              // будується тут і приходить туди готовим.
-              explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
-              explorerAddressUrl={(address) => explorerAddressUrl(address, cluster)}
-              {...demoActions}
-            />
-          ))}
+          )}
 
-        {view === 'subscribe' &&
-          (source.plans === null ? (
-            <Subscribe
-              onDone={() => setView('subscriptions')}
-              onAllow={allowPlan}
-              alreadyGiven={planAllowed}
-            />
-          ) : (
-            // Keyed by plan: a finished or stopped flow belongs to the plan it ran for.
-            <SubscribeFlow key={planPda ?? ''}>
-              {(controls) => (
-                <LiveSubscribe
-                  state={subscribeReview}
-                  onOpenPlan={openPlan}
-                  controls={controls}
-                  onDone={() => setView('subscriptions')}
-                  explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
-                />
-              )}
-            </SubscribeFlow>
-          ))}
+          {view === 'detail' &&
+            (selectedId === null ? (
+              <CancelFlow>
+                {(cancel) => (
+                  <Subscriptions
+                    state={allowances}
+                    walletLabel={walletLabel}
+                    onNetwork={source.onNetwork}
+                    onOpen={openDetail}
+                    cancel={cancel}
+                    live={live}
+                    push={push}
+                  />
+                )}
+              </CancelFlow>
+            ) : (
+              <Subscription
+                state={allowance}
+                onBack={() => setView('subscriptions')}
+                feed={feed}
+                live={live}
+                // Мережу знає оточення гаманця, а не екран картки: посилання
+                // будується тут і приходить туди готовим.
+                explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
+                explorerAddressUrl={(address) => explorerAddressUrl(address, cluster)}
+                {...demoActions}
+              />
+            ))}
 
-        {view === 'merchant' && <Merchant />}
+          {view === 'subscribe' &&
+            (source.plans === null ? (
+              <Subscribe
+                onDone={() => setView('subscriptions')}
+                onAllow={allowPlan}
+                alreadyGiven={planAllowed}
+              />
+            ) : (
+              <SubscribeView
+                planPda={planPda}
+                owner={owner}
+                onOpenPlan={openPlan}
+                onDone={() => setView('subscriptions')}
+                explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
+              />
+            ))}
+
+          {view === 'merchant' && <Merchant />}
+        </Suspense>
       </main>
     </div>
   )

@@ -1,5 +1,6 @@
 import type { UiWallet } from '@wallet-standard/react'
 import { useState } from 'react'
+import { storedLists } from '../lib/storedList.js'
 import { useWalletEnvironment } from './WalletProvider.js'
 import {
   shortenAddress,
@@ -63,7 +64,10 @@ function DisconnectButton({ wallet, label }: { wallet: UiWallet; label: string }
       type="button"
       className={BUTTON}
       disabled={isDisconnecting}
-      onClick={() => disconnect()}
+      onClick={() => {
+        storedLists.clear()
+        void disconnect()
+      }}
     >
       {isDisconnecting ? 'Disconnecting…' : label}
     </button>
@@ -78,7 +82,14 @@ function DisconnectButton({ wallet, label }: { wallet: UiWallet; label: string }
 function ForgetButton() {
   const { forget } = useWalletConnection()
   return (
-    <button type="button" className={BUTTON} onClick={() => forget()}>
+    <button
+      type="button"
+      className={BUTTON}
+      onClick={() => {
+        storedLists.clear()
+        forget()
+      }}
+    >
       Forget this wallet
     </button>
   )

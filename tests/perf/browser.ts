@@ -95,8 +95,8 @@ export async function cardCount(page: Page): Promise<number> {
 
 export type LaunchOptions = { proxyPort?: number }
 
-export function launch(config: PerfConfig, options: LaunchOptions = {}): Promise<Browser> {
-  return chromium.launch({
+function launchOptions(config: PerfConfig, options: LaunchOptions) {
+  return {
     executablePath: config.chromePath,
     headless: true,
     ...(options.proxyPort === undefined
@@ -106,7 +106,11 @@ export function launch(config: PerfConfig, options: LaunchOptions = {}): Promise
           proxy: { server: `http://127.0.0.1:${options.proxyPort}`, bypass: '<-loopback>' },
           args: ['--disable-quic'],
         }),
-  })
+  }
+}
+
+export function launch(config: PerfConfig, options: LaunchOptions = {}): Promise<Browser> {
+  return chromium.launch(launchOptions(config, options))
 }
 
 export type OpenOptions = {
@@ -118,15 +122,38 @@ export type OpenOptions = {
   cpuSlowdown?: number
 }
 
-/** A fresh context — empty cache, no cookies — with the wallet and the marks installed. */
-export async function newVisit(
-  browser: Browser,
-  options: OpenOptions,
-): Promise<{ context: BrowserContext; page: Page; consoleErrors: string[] }> {
-  const context = await browser.newContext({
+export type Visit = { context: BrowserContext; page: Page; consoleErrors: string[] }
+
+function contextOptions(options: OpenOptions) {
+  return {
     viewport: options.viewport,
     ...(options.mobile === true ? { isMobile: true, hasTouch: true, deviceScaleFactor: 2 } : {}),
+  }
+}
+
+/** A fresh context — empty cache, no cookies — with the wallet and the marks installed. */
+export async function newVisit(browser: Browser, options: OpenOptions): Promise<Visit> {
+  return openPage(await browser.newContext(contextOptions(options)), options)
+}
+
+/**
+ * A browser on a profile directory that outlives it (`SC-008`, `T057`): what a
+ * returning visitor brings — the service worker, its cache, the page's storage —
+ * survives a close and a relaunch; open connections do not.
+ */
+export async function profileVisit(
+  config: PerfConfig,
+  userDataDir: string,
+  options: OpenOptions & LaunchOptions,
+): Promise<Visit> {
+  const context = await chromium.launchPersistentContext(userDataDir, {
+    ...launchOptions(config, options),
+    ...contextOptions(options),
   })
+  return openPage(context, options)
+}
+
+async function openPage(context: BrowserContext, options: OpenOptions): Promise<Visit> {
   await context.addInitScript(stubWalletScript(options.owner))
   await context.addInitScript(marksScript(options.expectedCards))
   const page = await context.newPage()

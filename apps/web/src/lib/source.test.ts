@@ -16,6 +16,7 @@ import {
   UnknownSourceError,
   WalletRequiredError,
 } from './source'
+import type { ListStore } from './storedList'
 
 const OWNER = '4DYhzGx6J2xgJWs7nSCnTXgBdEnoQ9VnKfarJVz2Jj96' as Address
 const PDA = '3amcyam5KhjbWJLAMNPiAwpYPcV1atWSppEZK1ABoWBR'
@@ -170,7 +171,55 @@ describe('the API source', () => {
     expect(list.stale).toBe(true)
     expect(list.syncedAt).toBe('2026-09-02T10:00:00.000Z')
   })
+  it('keeps what it read as the wallet copy for the next visit, judged by its own clock', async () => {
+    const response = {
+      items: [item({ periodStartedAt: '2026-08-07T00:00:00.000Z' })],
+      // One period after the start: on this clock the period has run out.
+      syncedAt: '2026-09-06T00:00:00.000Z',
+      stale: false,
+      unreadable: [],
+    }
+    const store = memoryListStore()
+    const source = createApiSource(clientReturning(response), store)
+
+    expect(source.storedList(OWNER)).toBeNull()
+    const read = await source.listAllowances(OWNER)
+    expect(store.read(OWNER)).toEqual(response)
+    expect(source.storedList(OWNER)).toEqual(read)
+    expect(source.storedList(OWNER)?.items[0]?.periodElapsed).toBe(true)
+  })
+
+  it('keeps nothing from a read that failed', async () => {
+    const store = memoryListStore()
+    const source = createApiSource(
+      {
+        ...clientReturning({
+          items: [],
+          syncedAt: '2026-09-02T10:00:00.000Z',
+          stale: false,
+          unreadable: [],
+        }),
+        listAllowances: () => Promise.reject(new ApiRequestError(503, 'INTERNAL', 'down', null)),
+      },
+      store,
+    )
+    await expect(source.listAllowances(OWNER)).rejects.toBeInstanceOf(ApiRequestError)
+    expect(store.read(OWNER)).toBeNull()
+  })
+
+  it('the mock keeps no copy', () => {
+    expect(createMockSource().storedList(OWNER)).toBeNull()
+  })
 })
+
+function memoryListStore(): ListStore {
+  const copies = new Map<string, ListAllowancesResponse>()
+  return {
+    read: (owner) => copies.get(owner) ?? null,
+    save: (owner, response) => void copies.set(owner, response),
+    clear: () => copies.clear(),
+  }
+}
 
 function card(over: Partial<GetAllowanceResponse> = {}): GetAllowanceResponse {
   return {

@@ -29,6 +29,8 @@ vi.mock('./source', () => ({
     onNetwork: true,
     requiresWallet: true,
     listAllowances: mocks.listAllowances,
+    // No copy saved in this browser: the stream is about the network's reads.
+    storedList: () => null,
     getAllowance: mocks.getAllowance,
   },
   apiBaseUrlFromEnv: () => 'http://api.test',

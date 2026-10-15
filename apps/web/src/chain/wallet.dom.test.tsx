@@ -11,6 +11,7 @@ import type {
   WalletIcon,
 } from '@wallet-standard/base'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { STORED_LIST_PREFIX } from '../lib/storedList.js'
 import { WalletMenu } from './WalletMenu.js'
 import { WalletProvider } from './WalletProvider.js'
 import { SELECTED_WALLET_STORAGE_KEY } from './wallet.js'
@@ -145,15 +146,17 @@ describe('підключення гаманця', () => {
     expect(window.localStorage.length).toBe(1)
   })
 
-  it('від’єднання прибирає адресу й вибір зі сховища', async () => {
+  it('від’єднання прибирає адресу, вибір і збережену копію списку зі сховища', async () => {
     registerWallets(new FakeWallet('Test Wallet', SOLANA_DEVNET_CHAIN))
     renderMenu()
     fireEvent.click(screen.getByRole('button', { name: 'Connect Test Wallet' }))
     await screen.findByText('De1e…vR44')
+    window.localStorage.setItem(`${STORED_LIST_PREFIX}${OWNER}`, '{}')
 
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
     expect(await screen.findByRole('button', { name: 'Connect Test Wallet' })).toBeTruthy()
     expect(window.localStorage.getItem(SELECTED_WALLET_STORAGE_KEY)).toBeNull()
+    expect(window.localStorage.getItem(`${STORED_LIST_PREFIX}${OWNER}`)).toBeNull()
   })
 
   it('відновлює вибір із попередньої сесії, не питаючи вдруге', async () => {

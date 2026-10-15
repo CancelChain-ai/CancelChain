@@ -1,5 +1,6 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
+import { bundleBudget, preconnectToApi } from './buildPlugins'
 
 /**
  * `VITE_API_URL` не задано — клієнт стукає у власний origin (`lib/source.ts`),
@@ -22,6 +23,14 @@ const API_TARGET =
  */
 const BASE_PATH = process.env.BASE_PATH ?? '/'
 
+/**
+ * The first screen's JavaScript, gzipped. Measured 2026-10-15 at 121.8 KB after
+ * the card, subscribe and merchant screens went lazy; most of what is left is
+ * `zod` (the API boundary), `react-dom` and the query cache. Raising it is a
+ * decision against `SC-008`, made here in the open.
+ */
+const FIRST_SCREEN_JS_BUDGET = 125_000
+
 export default defineConfig({
   base: BASE_PATH,
   /**
@@ -43,7 +52,7 @@ export default defineConfig({
    */
   envDir: '../../',
   envPrefix: ['VITE_'],
-  plugins: [react()],
+  plugins: [react(), preconnectToApi(), bundleBudget(FIRST_SCREEN_JS_BUDGET)],
   server: {
     port: 5173,
     proxy: { '/v1': { target: API_TARGET, changeOrigin: true } },

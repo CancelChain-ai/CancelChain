@@ -7,7 +7,7 @@ import type { AllowanceList } from '../lib/source'
 import type { AllowancesState } from '../lib/useAllowances'
 import type { LiveState } from '../lib/useStream'
 import { viewFromAllowance as toView } from '../lib/view'
-import Subscriptions from './Subscriptions'
+import Subscriptions, { copyMoment, divergenceSentence } from './Subscriptions'
 
 /**
  * Екран списку на справжніх даних (`T023`). Перевіряється не верстка, а те, що
@@ -66,8 +66,17 @@ function list(over: Partial<AllowanceList> = {}): AllowanceList {
   }
 }
 
-function ready(over: Partial<AllowanceList> = {}): AllowancesState {
-  return { status: 'ready', list: list(over), refreshing: false, refreshFailed: null }
+type Ready = Extract<AllowancesState, { status: 'ready' }>
+
+function ready(over: Partial<AllowanceList> = {}): Ready {
+  return {
+    status: 'ready',
+    list: list(over),
+    refreshing: false,
+    refreshFailed: null,
+    savedCopy: false,
+    sinceSavedCopy: null,
+  }
 }
 
 function controls(onCancel: (id: string) => void): CancelControls {
@@ -149,9 +158,60 @@ describe('the state of the list', () => {
       list: list(),
       refreshing: false,
       refreshFailed: 'could not reach CancelChain',
+      savedCopy: false,
+      sinceSavedCopy: null,
     })
     expect(screen.getByText(/latest re-read failed/i)).toBeDefined()
     expect(screen.getByText(/Up to 24.00 USDC every 30 days/i)).toBeDefined()
+  })
+})
+
+describe('the copy saved in this browser (SC-008)', () => {
+  it('says the list is a saved copy and that the network is being re-read', () => {
+    show({ ...ready(), refreshing: true, savedCopy: true })
+    expect(
+      screen.getByText(/Saved in this browser, as of .* re-reading the network/i),
+    ).toBeDefined()
+    expect(screen.queryByText(/Read from the network at/i)).toBeNull()
+    expect(screen.getByText(/Up to 24.00 USDC every 30 days/i)).toBeDefined()
+  })
+
+  it('stops promising a re-read once it has failed', () => {
+    show({ ...ready(), savedCopy: true, refreshFailed: 'could not reach CancelChain' })
+    expect(screen.getByText(/Saved in this browser, as of/i)).toBeDefined()
+    expect(screen.queryByText(/re-reading the network/i)).toBeNull()
+    expect(screen.getByText(/latest re-read failed/i)).toBeDefined()
+  })
+
+  it('names what the network changed against the copy', () => {
+    show({
+      ...ready(),
+      sinceSavedCopy: {
+        savedAt: '2026-09-02T09:00:00.000Z',
+        divergence: { added: 2, gone: 1, changed: 0 },
+      },
+    })
+    expect(screen.getByText(/Read from the network at/i)).toBeDefined()
+    expect(
+      screen.getByText(
+        /differs from the copy saved at .*: 1 permission gone, 2 permissions new\./i,
+      ),
+    ).toBeDefined()
+  })
+
+  it('a copy from another day carries its day', () => {
+    const now = new Date(2026, 9, 15, 12, 0)
+    expect(copyMoment(new Date(2026, 9, 15, 9, 5), now)).toBe('09:05')
+    expect(copyMoment(new Date(2026, 9, 14, 9, 5), now)).toBe('14 Oct, 09:05')
+    expect(copyMoment(new Date(2025, 9, 14, 9, 5), now)).toBe('14 Oct 2025, 09:05')
+  })
+
+  it('counts each kind of change in words', () => {
+    expect(
+      divergenceSentence(new Date(), { added: 0, gone: 0, changed: 1 }).includes(
+        ': 1 permission changed.',
+      ),
+    ).toBe(true)
   })
 })
 
@@ -560,6 +620,8 @@ describe('what an empty list is allowed to claim', () => {
       list: list({ items: [] }),
       refreshing: false,
       refreshFailed: 'could not reach CancelChain',
+      savedCopy: false,
+      sinceSavedCopy: null,
     })
     expect(screen.queryByText(/No one can charge this wallet/i)).toBeNull()
     expect(screen.getByText(/not what it says now/i)).toBeDefined()
