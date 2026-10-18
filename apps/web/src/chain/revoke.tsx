@@ -237,7 +237,17 @@ export const CancelFlow = ({ children }: { children: (controls: CancelControls) 
   const { account, wallets } = useWalletConnection()
 
   if (source.actions === null) {
-    return <>{children(unavailableControls('This screen is a demo — nothing here is signed.'))}</>
+    return (
+      <>
+        {children(
+          unavailableControls(
+            source.provenance === 'recorded'
+              ? 'This is a recording of devnet — nothing here is signed.'
+              : 'This screen is a demo — nothing here is signed.',
+          ),
+        )}
+      </>
+    )
   }
   if (account === undefined) {
     return <>{children(unavailableControls('Connect a wallet to cancel a permission.'))}</>

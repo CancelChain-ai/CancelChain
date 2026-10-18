@@ -3,7 +3,7 @@ import { stepLabel } from '../chain/revoke'
 import AllowanceCard, { type CancelNotice, NOTICE_STYLES } from '../components/AllowanceCard'
 import { LiveStatus } from '../components/LiveStatus'
 import { PushSwitch } from '../components/PushSwitch'
-import type { AllowanceList } from '../lib/source'
+import type { AllowanceList, Provenance } from '../lib/source'
 import type { ListDivergence } from '../lib/storedList'
 import type { AllowancesState } from '../lib/useAllowances'
 import type { PushControls } from '../lib/usePush'
@@ -44,8 +44,8 @@ interface SubscriptionsProps {
   state: AllowancesState
   /** Гаманець, чий це список. `null` — джерело його не потребує (мок). */
   walletLabel: string | null
-  /** Чи стоїть за списком мережа: від цього залежить, що екран каже про себе. */
-  onNetwork: boolean
+  /** Where the list comes from: it decides what the screen says about itself. */
+  provenance: Provenance
   onOpen?: ((id: string) => void) | undefined
   /**
    * Скасування (`FR-003`). Немає — кнопки немає взагалі: над справжніми
@@ -170,7 +170,7 @@ export function divergenceSentence(savedAt: Date, divergence: ListDivergence): s
 const Header = ({
   list,
   walletLabel,
-  onNetwork,
+  provenance,
   savedCopy,
   refreshing,
   live,
@@ -178,7 +178,7 @@ const Header = ({
 }: {
   list: AllowanceList
   walletLabel: string | null
-  onNetwork: boolean
+  provenance: Provenance
   savedCopy: boolean
   refreshing: boolean
   live: LiveState
@@ -214,8 +214,9 @@ const Header = ({
           </span>
         ) : (
           <span className="text-[12px] text-ink/45 tnum">
-            {onNetwork ? 'Read from the network at ' : 'Invented data, generated at '}
-            {formatClock(new Date(list.syncedAt))}
+            {provenance === 'recorded'
+              ? `Recorded from the network at ${copyMoment(new Date(list.syncedAt))} — not live`
+              : `${provenance === 'network' ? 'Read from the network at ' : 'Invented data, generated at '}${formatClock(new Date(list.syncedAt))}`}
           </span>
         )}
         <LiveStatus state={live} className="max-w-[320px] sm:text-right" />
@@ -422,7 +423,7 @@ const EmptyList = ({
 const Subscriptions = ({
   state,
   walletLabel,
-  onNetwork,
+  provenance,
   onOpen,
   cancel,
   live = 'off',
@@ -459,7 +460,7 @@ const Subscriptions = ({
       <Header
         list={list}
         walletLabel={walletLabel}
-        onNetwork={onNetwork}
+        provenance={provenance}
         savedCopy={state.savedCopy}
         refreshing={state.refreshing}
         live={live}

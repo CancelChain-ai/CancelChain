@@ -247,6 +247,14 @@ describe('what the network says about the card', () => {
     expect(screen.getByText(/Read from the network at .*slot 400000000/)).toBeTruthy()
   })
 
+  it('says a recorded card was recorded and is not live (T058)', () => {
+    render(<Subscription state={ready()} onBack={() => {}} recorded />)
+    expect(
+      screen.getByText(/Recorded from the network at .*slot 400000000 — not live/),
+    ).toBeTruthy()
+    expect(screen.queryByText(/Read from the network at/)).toBeNull()
+  })
+
   it('says whether the card keeps itself current (T042a)', () => {
     render(<Subscription state={ready()} onBack={() => {}} live="down" />)
     expect(screen.getByRole('status').textContent).toMatch(/Live updates are off/)

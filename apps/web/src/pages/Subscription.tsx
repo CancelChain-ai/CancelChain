@@ -47,6 +47,8 @@ import {
 interface SubscriptionProps {
   state: AllowanceState
   onBack: () => void
+  /** The card comes from a recording of the network (`T058`), not from a read just now. */
+  recorded?: boolean | undefined
   /**
    * The feed (`T041a`; the address history of `T030` when the indexer has not
    * seen the permission). A state of its own, not a field of the card: a failed
@@ -182,13 +184,13 @@ function secondaryRows(
 }
 
 /** Звідки взято те, що вище, і коли. Мок каже про себе, що він вигаданий. */
-const ReadAt = ({ detail }: { detail: AllowanceDetailView }) => (
+const ReadAt = ({ detail, recorded }: { detail: AllowanceDetailView; recorded: boolean }) => (
   <p className="mt-4 text-[12px] text-ink/45 tnum">
     {detail.networkState === 'none'
       ? `Invented data, generated at ${formatClock(detail.syncedAt)}`
-      : `Read from the network at ${formatClock(detail.syncedAt)}${
-          detail.slot === null ? '' : ` · slot ${detail.slot}`
-        }`}
+      : `${recorded ? 'Recorded from the network' : 'Read from the network'} at ${formatClock(
+          detail.syncedAt,
+        )}${detail.slot === null ? '' : ` · slot ${detail.slot}`}${recorded ? ' — not live' : ''}`}
   </p>
 )
 
@@ -567,6 +569,7 @@ const Card = ({
   explorerUrl,
   explorerAddressUrl,
   live = 'off',
+  recorded = false,
 }: {
   detail: AllowanceDetailView
   refreshFailed: string | null
@@ -689,7 +692,7 @@ const Card = ({
         ))}
       </dl>
 
-      <ReadAt detail={detail} />
+      <ReadAt detail={detail} recorded={recorded} />
       <LiveStatus state={live} className="mt-1 block" />
 
       <div className="mt-10 border-t border-hairline">

@@ -24,11 +24,11 @@ export function useStream(
   create: (url: string) => EventSourceLike = defaultCreate,
 ): LiveState {
   const queryClient = useQueryClient()
-  const enabled = source.onNetwork && owner !== null
+  const enabled = source.provenance === 'network' && owner !== null
   const [status, setStatus] = useState<StreamStatus>('connecting')
 
   useEffect(() => {
-    if (!source.onNetwork || owner === null) return
+    if (source.provenance !== 'network' || owner === null) return
     const cache = createStreamCache({ queryClient, kind: source.kind, owner, floors: slotFloors })
     const close = openStream({
       url: streamUrl(apiBaseUrlFromEnv(import.meta.env), owner),

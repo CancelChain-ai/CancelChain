@@ -88,7 +88,7 @@ function show(state: AllowancesState, onCancel?: (id: string) => void) {
     <Subscriptions
       state={state}
       walletLabel="4DYh…Jj96"
-      onNetwork={true}
+      provenance="network"
       cancel={onCancel === undefined ? undefined : controls(onCancel)}
     />,
   )
@@ -102,7 +102,9 @@ afterEach(cleanup)
  */
 describe('live updates', () => {
   const live = (state: LiveState) =>
-    render(<Subscriptions state={ready()} walletLabel="4DYh…Jj96" onNetwork={true} live={state} />)
+    render(
+      <Subscriptions state={ready()} walletLabel="4DYh…Jj96" provenance="network" live={state} />,
+    )
 
   it('says the list is live once the stream is', () => {
     live('live')
@@ -163,6 +165,15 @@ describe('the state of the list', () => {
     })
     expect(screen.getByText(/latest re-read failed/i)).toBeDefined()
     expect(screen.getByText(/Up to 24.00 USDC every 30 days/i)).toBeDefined()
+  })
+})
+
+describe('a recorded list (T058)', () => {
+  it('says it was recorded from the network and is not live — not that it was read now', () => {
+    render(<Subscriptions state={ready()} walletLabel="5nhM…Cy7a" provenance="recorded" />)
+    expect(screen.getByText(/Recorded from the network at .* — not live/)).toBeDefined()
+    expect(screen.queryByText(/Read from the network at/i)).toBeNull()
+    expect(screen.queryByText(/Invented data/i)).toBeNull()
   })
 })
 
@@ -377,7 +388,7 @@ describe('a card of real data', () => {
 
   it('shows a cancelled allowance as cancelled — only where no network stands behind the list', () => {
     /*
-     * Картка-надгробок належить демо M0, і `onNetwork={false}` тут не деталь
+     * Картка-надгробок належить демо M0, і `provenance="invented"` тут не деталь
      * рендера: з мережі скасований дозвіл не приходить узагалі (акаунт
      * закритий, `deriveStatus` такого статусу не видає), і намальована нами
      * мітка над справжнім списком була б розбіжністю з мережею (`T029`).
@@ -386,7 +397,7 @@ describe('a card of real data', () => {
       <Subscriptions
         state={ready({ items: [viewFromAllowance(listed({ status: 'revoked' }))] })}
         walletLabel={null}
-        onNetwork={false}
+        provenance="invented"
       />,
     )
     expect(screen.getByText('Cancelled')).toBeDefined()
@@ -442,7 +453,7 @@ describe('cancelling from the list', () => {
       <Subscriptions
         state={ready()}
         walletLabel="4DYh…Jj96"
-        onNetwork={true}
+        provenance="network"
         cancel={{ state, cancel, unavailable: null, dismiss: () => {} }}
       />,
     )
@@ -498,7 +509,7 @@ describe('cancelling from the list', () => {
           items: [viewFromAllowance(listed()), viewFromAllowance(listed({ pda: OTHER_PDA }))],
         })}
         walletLabel="4DYh…Jj96"
-        onNetwork={true}
+        provenance="network"
         cancel={{
           state: { status: 'working', id: PDA, step: 'confirming', action: 'close' },
           cancel: () => {},
@@ -516,7 +527,7 @@ describe('cancelling from the list', () => {
       <Subscriptions
         state={ready()}
         walletLabel="4DYh…Jj96"
-        onNetwork={true}
+        provenance="network"
         cancel={{
           state: { status: 'idle' },
           cancel: null,
@@ -544,7 +555,7 @@ describe('a permission that is gone from the list', () => {
       <Subscriptions
         state={listState}
         walletLabel="4DYh…Jj96"
-        onNetwork={true}
+        provenance="network"
         cancel={{ state, cancel: () => {}, unavailable: null, dismiss: () => {} }}
       />,
     )
@@ -660,7 +671,7 @@ describe('cancelling a plan subscription', () => {
       <Subscriptions
         state={ready({ items: [viewFromAllowance(allowance)] })}
         walletLabel="4DYh…Jj96"
-        onNetwork={true}
+        provenance="network"
         cancel={{ state, cancel, unavailable: null, dismiss: () => {} }}
       />,
     )

@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./source', () => ({
   source: {
     kind: 'api',
-    onNetwork: true,
+    provenance: 'network',
     requiresWallet: true,
     listAllowances: mocks.listAllowances,
     // No copy saved in this browser: the stream is about the network's reads.

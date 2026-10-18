@@ -1,0 +1,506 @@
+{
+  "version": 1,
+  "cluster": "devnet",
+  "recordedAt": "2026-10-18T09:15:34.528Z",
+  "apiUrl": "https://cancelchain-api.onrender.com",
+  "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+  "merchant": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+  "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  "steps": [
+    {
+      "stage": "before",
+      "label": "Permission granted: 15 USDC every 30 days",
+      "signer": "owner",
+      "signature": "5HqYDLPGzevRev26DJdCkXKQvMNzhT1CuKf9Je2CNkUyErabe9RUGz1GFT47aBod1UjZa5pPKe9JZCdSJvVv5Ci6",
+      "outcome": "confirmed",
+      "refusal": null
+    },
+    {
+      "stage": "before",
+      "label": "Permission granted: 25 USDC every 7 days",
+      "signer": "owner",
+      "signature": "3XABexErcm51YwZxUfhY7yJp2TQzrdyuzrgeXqNwhtsrTPprozK4ErSq2yN1rszM7PEweSbnsBy59Ez7fPhHpUwf",
+      "outcome": "confirmed",
+      "refusal": null
+    },
+    {
+      "stage": "before",
+      "label": "Merchant charges 25.000001 USDC — over the ceiling",
+      "signer": "merchant",
+      "signature": "58EtHYs4Yb3khn31UjidsaP4Uy1bHnYKLSd24TcKdnKQqaasmeiJLN4rVpJodx1TSy3A9ejCCQFCBzsTmkM1k9XW",
+      "outcome": "refused",
+      "refusal": "AmountExceedsPeriodLimit (program error 400)"
+    },
+    {
+      "stage": "after",
+      "label": "Owner cancels the 15 USDC permission",
+      "signer": "owner",
+      "signature": "5fR4ycitKVUCLAwNq2cYTrbadgnAEmYbt2gmKYSza7cLzVxSNsmvbyp8svGoUaeAN2hmbJjPopNEUCPouWKSYXbs",
+      "outcome": "confirmed",
+      "refusal": null
+    },
+    {
+      "stage": "after",
+      "label": "Merchant charges 1 USDC on the cancelled permission",
+      "signer": "merchant",
+      "signature": "2T7gbY56USm9HtA8oD6dySKDQTnrmRocXJrkC3ErqFPQnkGQ7DrwEXyWF4X8H4TYqukBDicHaE82nL1LPoUsC33G",
+      "outcome": "refused",
+      "refusal": "InvalidAccountOwner — the permission's account is closed"
+    }
+  ],
+  "stages": [
+    {
+      "id": "before",
+      "title": "Before cancelling",
+      "summary": "The wallet has granted two permissions to the merchant. The merchant tried to charge one of them over its ceiling, and the program refused.",
+      "recordedAt": "2026-10-18T09:15:29.252Z",
+      "responses": {
+        "/v1/allowances?owner=FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "pda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+                "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+                "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+                "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                "kind": "recurring",
+                "capAmount": "15000000",
+                "periodSeconds": 2592000,
+                "spentInPeriod": "0",
+                "periodStartedAt": "2026-10-18T09:15:24.000Z",
+                "expiresAt": "2027-10-18T09:15:24.000Z",
+                "pausedAt": null,
+                "endsAt": null,
+                "status": "active",
+                "planPda": null,
+                "lastSlot": 512387257,
+                "syncedAt": "2026-10-18T09:15:30.024Z",
+                "assetSupported": true
+              },
+              {
+                "pda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+                "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+                "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+                "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                "kind": "recurring",
+                "capAmount": "25000000",
+                "periodSeconds": 604800,
+                "spentInPeriod": "0",
+                "periodStartedAt": "2026-10-18T09:15:26.000Z",
+                "expiresAt": "2027-10-18T09:15:25.000Z",
+                "pausedAt": null,
+                "endsAt": null,
+                "status": "active",
+                "planPda": null,
+                "lastSlot": 512387257,
+                "syncedAt": "2026-10-18T09:15:30.024Z",
+                "assetSupported": true
+              }
+            ],
+            "syncedAt": "2026-10-18T09:15:30.024Z",
+            "stale": false,
+            "unreadable": []
+          }
+        },
+        "/v1/allowances/8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM": {
+          "status": 200,
+          "body": {
+            "pda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+            "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+            "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+            "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            "kind": "recurring",
+            "capAmount": "15000000",
+            "periodSeconds": 2592000,
+            "spentInPeriod": "0",
+            "periodStartedAt": "2026-10-18T09:15:24.000Z",
+            "expiresAt": "2027-10-18T09:15:24.000Z",
+            "pausedAt": null,
+            "endsAt": null,
+            "status": "active",
+            "planPda": null,
+            "lastSlot": 512387259,
+            "syncedAt": "2026-10-18T09:15:30.295Z",
+            "chainState": {
+              "status": "active",
+              "capAmount": "15000000",
+              "spentInPeriod": "0",
+              "periodStartedAt": "2026-10-18T09:15:24.000Z",
+              "pausedAt": null,
+              "endsAt": null,
+              "slot": 512387259
+            },
+            "diverged": false,
+            "assetSupported": true
+          }
+        },
+        "/v1/allowances/J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo": {
+          "status": 200,
+          "body": {
+            "pda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+            "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+            "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+            "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            "kind": "recurring",
+            "capAmount": "25000000",
+            "periodSeconds": 604800,
+            "spentInPeriod": "0",
+            "periodStartedAt": "2026-10-18T09:15:26.000Z",
+            "expiresAt": "2027-10-18T09:15:25.000Z",
+            "pausedAt": null,
+            "endsAt": null,
+            "status": "active",
+            "planPda": null,
+            "lastSlot": 512387260,
+            "syncedAt": "2026-10-18T09:15:30.570Z",
+            "chainState": {
+              "status": "active",
+              "capAmount": "25000000",
+              "spentInPeriod": "0",
+              "periodStartedAt": "2026-10-18T09:15:26.000Z",
+              "pausedAt": null,
+              "endsAt": null,
+              "slot": 512387260
+            },
+            "diverged": false,
+            "assetSupported": true
+          }
+        },
+        "/v1/allowances/8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM/signatures": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "signature": "5HqYDLPGzevRev26DJdCkXKQvMNzhT1CuKf9Je2CNkUyErabe9RUGz1GFT47aBod1UjZa5pPKe9JZCdSJvVv5Ci6",
+                "slot": 512387240,
+                "blockTime": "2026-10-18T09:15:25.000Z",
+                "failed": false
+              }
+            ],
+            "syncedAt": "2026-10-18T09:15:30.840Z",
+            "more": false
+          }
+        },
+        "/v1/allowances/J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo/signatures": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "signature": "58EtHYs4Yb3khn31UjidsaP4Uy1bHnYKLSd24TcKdnKQqaasmeiJLN4rVpJodx1TSy3A9ejCCQFCBzsTmkM1k9XW",
+                "slot": 512387253,
+                "blockTime": "2026-10-18T09:15:28.000Z",
+                "failed": true
+              },
+              {
+                "signature": "3XABexErcm51YwZxUfhY7yJp2TQzrdyuzrgeXqNwhtsrTPprozK4ErSq2yN1rszM7PEweSbnsBy59Ez7fPhHpUwf",
+                "slot": 512387245,
+                "blockTime": "2026-10-18T09:15:26.000Z",
+                "failed": false
+              }
+            ],
+            "syncedAt": "2026-10-18T09:15:31.018Z",
+            "more": false
+          }
+        },
+        "/v1/allowances/8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM/events": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "id": "861",
+                "allowancePda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+                "kind": "created",
+                "amount": null,
+                "reason": null,
+                "signature": "5HqYDLPGzevRev26DJdCkXKQvMNzhT1CuKf9Je2CNkUyErabe9RUGz1GFT47aBod1UjZa5pPKe9JZCdSJvVv5Ci6",
+                "slot": 512387240,
+                "blockTime": "2026-10-18T09:15:25.000Z",
+                "chargesStopAt": null
+              }
+            ],
+            "nextCursor": null,
+            "truncatedAt": null,
+            "tracked": true,
+            "syncedAt": "2026-10-18T09:15:16.289Z",
+            "stale": false,
+            "retention": {
+              "enforced": true,
+              "days": 90,
+              "keptSince": "2026-07-20T09:13:16.096Z"
+            }
+          }
+        },
+        "/v1/allowances/J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo/events": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "id": "863",
+                "allowancePda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+                "kind": "rejected",
+                "amount": "25000001",
+                "reason": "cap_exceeded",
+                "signature": "58EtHYs4Yb3khn31UjidsaP4Uy1bHnYKLSd24TcKdnKQqaasmeiJLN4rVpJodx1TSy3A9ejCCQFCBzsTmkM1k9XW",
+                "slot": 512387253,
+                "blockTime": "2026-10-18T09:15:28.000Z",
+                "chargesStopAt": null
+              },
+              {
+                "id": "862",
+                "allowancePda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+                "kind": "created",
+                "amount": null,
+                "reason": null,
+                "signature": "3XABexErcm51YwZxUfhY7yJp2TQzrdyuzrgeXqNwhtsrTPprozK4ErSq2yN1rszM7PEweSbnsBy59Ez7fPhHpUwf",
+                "slot": 512387245,
+                "blockTime": "2026-10-18T09:15:26.000Z",
+                "chargesStopAt": null
+              }
+            ],
+            "nextCursor": null,
+            "truncatedAt": null,
+            "tracked": true,
+            "syncedAt": "2026-10-18T09:15:31.288Z",
+            "stale": false,
+            "retention": {
+              "enforced": true,
+              "days": 90,
+              "keptSince": "2026-07-20T09:13:16.096Z"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "after",
+      "title": "After cancelling",
+      "summary": "The owner cancelled the 15 USDC permission with one signature. The merchant then tried to charge it, and the protocol refused: the account is closed.",
+      "recordedAt": "2026-10-18T09:15:34.528Z",
+      "responses": {
+        "/v1/allowances?owner=FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "pda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+                "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+                "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+                "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+                "kind": "recurring",
+                "capAmount": "25000000",
+                "periodSeconds": 604800,
+                "spentInPeriod": "0",
+                "periodStartedAt": "2026-10-18T09:15:26.000Z",
+                "expiresAt": "2027-10-18T09:15:25.000Z",
+                "pausedAt": null,
+                "endsAt": null,
+                "status": "active",
+                "planPda": null,
+                "lastSlot": 512387279,
+                "syncedAt": "2026-10-18T09:15:35.258Z",
+                "assetSupported": true
+              }
+            ],
+            "syncedAt": "2026-10-18T09:15:35.258Z",
+            "stale": false,
+            "unreadable": []
+          }
+        },
+        "/v1/allowances/8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM": {
+          "status": 200,
+          "body": {
+            "pda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+            "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+            "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+            "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            "kind": "recurring",
+            "capAmount": "15000000",
+            "periodSeconds": 2592000,
+            "spentInPeriod": "0",
+            "periodStartedAt": "2026-10-18T09:15:24.000Z",
+            "expiresAt": "2027-10-18T09:15:24.000Z",
+            "pausedAt": null,
+            "endsAt": null,
+            "status": "revoked",
+            "planPda": null,
+            "lastSlot": 512387281,
+            "syncedAt": "2026-10-18T09:15:34.231Z",
+            "chainState": null,
+            "diverged": false,
+            "assetSupported": true
+          }
+        },
+        "/v1/allowances/J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo": {
+          "status": 200,
+          "body": {
+            "pda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+            "owner": "FLgtBwfweXqTNorwVunHaQyQdrS9ctwZ7Eqb9fJCQkgB",
+            "delegate": "FGHMNoGvR5zP9K5Cs4XrwZhQnAxNrFEQYH3TK22fBkKF",
+            "mint": "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+            "kind": "recurring",
+            "capAmount": "25000000",
+            "periodSeconds": 604800,
+            "spentInPeriod": "0",
+            "periodStartedAt": "2026-10-18T09:15:26.000Z",
+            "expiresAt": "2027-10-18T09:15:25.000Z",
+            "pausedAt": null,
+            "endsAt": null,
+            "status": "active",
+            "planPda": null,
+            "lastSlot": 512387281,
+            "syncedAt": "2026-10-18T09:15:35.709Z",
+            "chainState": {
+              "status": "active",
+              "capAmount": "25000000",
+              "spentInPeriod": "0",
+              "periodStartedAt": "2026-10-18T09:15:26.000Z",
+              "pausedAt": null,
+              "endsAt": null,
+              "slot": 512387281
+            },
+            "diverged": false,
+            "assetSupported": true
+          }
+        },
+        "/v1/allowances/8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM/signatures": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "signature": "2T7gbY56USm9HtA8oD6dySKDQTnrmRocXJrkC3ErqFPQnkGQ7DrwEXyWF4X8H4TYqukBDicHaE82nL1LPoUsC33G",
+                "slot": 512387275,
+                "blockTime": "2026-10-18T09:15:33.000Z",
+                "failed": true
+              },
+              {
+                "signature": "5fR4ycitKVUCLAwNq2cYTrbadgnAEmYbt2gmKYSza7cLzVxSNsmvbyp8svGoUaeAN2hmbJjPopNEUCPouWKSYXbs",
+                "slot": 512387268,
+                "blockTime": "2026-10-18T09:15:31.000Z",
+                "failed": false
+              },
+              {
+                "signature": "5HqYDLPGzevRev26DJdCkXKQvMNzhT1CuKf9Je2CNkUyErabe9RUGz1GFT47aBod1UjZa5pPKe9JZCdSJvVv5Ci6",
+                "slot": 512387240,
+                "blockTime": "2026-10-18T09:15:25.000Z",
+                "failed": false
+              }
+            ],
+            "syncedAt": "2026-10-18T09:15:35.980Z",
+            "more": false
+          }
+        },
+        "/v1/allowances/J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo/signatures": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "signature": "58EtHYs4Yb3khn31UjidsaP4Uy1bHnYKLSd24TcKdnKQqaasmeiJLN4rVpJodx1TSy3A9ejCCQFCBzsTmkM1k9XW",
+                "slot": 512387253,
+                "blockTime": "2026-10-18T09:15:28.000Z",
+                "failed": true
+              },
+              {
+                "signature": "3XABexErcm51YwZxUfhY7yJp2TQzrdyuzrgeXqNwhtsrTPprozK4ErSq2yN1rszM7PEweSbnsBy59Ez7fPhHpUwf",
+                "slot": 512387245,
+                "blockTime": "2026-10-18T09:15:26.000Z",
+                "failed": false
+              }
+            ],
+            "syncedAt": "2026-10-18T09:15:36.136Z",
+            "more": false
+          }
+        },
+        "/v1/allowances/8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM/events": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "id": "865",
+                "allowancePda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+                "kind": "rejected",
+                "amount": "1000000",
+                "reason": "revoked",
+                "signature": "2T7gbY56USm9HtA8oD6dySKDQTnrmRocXJrkC3ErqFPQnkGQ7DrwEXyWF4X8H4TYqukBDicHaE82nL1LPoUsC33G",
+                "slot": 512387275,
+                "blockTime": "2026-10-18T09:15:33.000Z",
+                "chargesStopAt": null
+              },
+              {
+                "id": "864",
+                "allowancePda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+                "kind": "revoked",
+                "amount": null,
+                "reason": null,
+                "signature": "5fR4ycitKVUCLAwNq2cYTrbadgnAEmYbt2gmKYSza7cLzVxSNsmvbyp8svGoUaeAN2hmbJjPopNEUCPouWKSYXbs",
+                "slot": 512387268,
+                "blockTime": "2026-10-18T09:15:31.000Z",
+                "chargesStopAt": null
+              },
+              {
+                "id": "861",
+                "allowancePda": "8S5K82jBQBda3QLtMs4hFURkdhz4hNaBdZgzMxG6h9yM",
+                "kind": "created",
+                "amount": null,
+                "reason": null,
+                "signature": "5HqYDLPGzevRev26DJdCkXKQvMNzhT1CuKf9Je2CNkUyErabe9RUGz1GFT47aBod1UjZa5pPKe9JZCdSJvVv5Ci6",
+                "slot": 512387240,
+                "blockTime": "2026-10-18T09:15:25.000Z",
+                "chargesStopAt": null
+              }
+            ],
+            "nextCursor": null,
+            "truncatedAt": null,
+            "tracked": true,
+            "syncedAt": "2026-10-18T09:15:31.288Z",
+            "stale": false,
+            "retention": {
+              "enforced": true,
+              "days": 90,
+              "keptSince": "2026-07-20T09:13:16.096Z"
+            }
+          }
+        },
+        "/v1/allowances/J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo/events": {
+          "status": 200,
+          "body": {
+            "items": [
+              {
+                "id": "863",
+                "allowancePda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+                "kind": "rejected",
+                "amount": "25000001",
+                "reason": "cap_exceeded",
+                "signature": "58EtHYs4Yb3khn31UjidsaP4Uy1bHnYKLSd24TcKdnKQqaasmeiJLN4rVpJodx1TSy3A9ejCCQFCBzsTmkM1k9XW",
+                "slot": 512387253,
+                "blockTime": "2026-10-18T09:15:28.000Z",
+                "chargesStopAt": null
+              },
+              {
+                "id": "862",
+                "allowancePda": "J6m9DPDztNFqNyqAhgWw2uYAcDvk6iAqUGZjwoAFrfuo",
+                "kind": "created",
+                "amount": null,
+                "reason": null,
+                "signature": "3XABexErcm51YwZxUfhY7yJp2TQzrdyuzrgeXqNwhtsrTPprozK4ErSq2yN1rszM7PEweSbnsBy59Ez7fPhHpUwf",
+                "slot": 512387245,
+                "blockTime": "2026-10-18T09:15:26.000Z",
+                "chargesStopAt": null
+              }
+            ],
+            "nextCursor": null,
+            "truncatedAt": null,
+            "tracked": true,
+            "syncedAt": "2026-10-18T09:15:31.288Z",
+            "stale": false,
+            "retention": {
+              "enforced": true,
+              "days": 90,
+              "keptSince": "2026-07-20T09:13:16.096Z"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

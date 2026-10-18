@@ -9,6 +9,13 @@ import {
   type ListAllowancesResponse,
 } from './api.js'
 import { PERMISSIONS, type Permission } from './mockData.js'
+import {
+  loadDemoSnapshot,
+  replayFetch,
+  replayStage,
+  type SnapshotLoader,
+  type StageStore,
+} from './replay.js'
 import { type ListStore, storedLists } from './storedList.js'
 import {
   type AddressHistoryView,
@@ -32,8 +39,16 @@ import {
  * не має ані PDA, ані чужих мінів, ані нечитаних акаунтів.
  */
 
-export const SOURCE_KINDS = ['mock', 'api'] as const
+export const SOURCE_KINDS = ['mock', 'api', 'snapshot'] as const
 export type SourceKind = (typeof SOURCE_KINDS)[number]
+
+/**
+ * Where what the screens show comes from — and so what they must say about it:
+ * read from the network now, invented (the M0 mock), or recorded from the
+ * network earlier (`T058`). A recording is real data and not live, and neither
+ * of the other two words is true of it.
+ */
+export type Provenance = 'network' | 'invented' | 'recorded'
 
 export interface AllowanceList {
   items: AllowanceView[]
@@ -81,8 +96,12 @@ export interface AllowanceSource {
    * списком.
    */
   readonly requiresWallet: boolean
-  /** Чи є за цим джерелом мережа. Від цього залежить, що застосунок каже про себе. */
-  readonly onNetwork: boolean
+  /**
+   * Where the data comes from. It decides what the app says about itself, and
+   * whether the stream and notifications run: they need the network now, not a
+   * recording of it.
+   */
+  readonly provenance: Provenance
   /** `minSlot` — see `ApiClient.listAllowances`; a source without a network ignores it. */
   listAllowances(
     owner: Address | null,
@@ -170,7 +189,7 @@ export function createMockSource(): AllowanceSource {
     kind: 'mock',
     actions: null,
     requiresWallet: false,
-    onNetwork: false,
+    provenance: 'invented',
     listAllowances: () =>
       Promise.resolve({
         items: mockData.read().map(viewFromPermission),
@@ -236,7 +255,7 @@ export function createApiSource(
       },
     },
     requiresWallet: true,
-    onNetwork: true,
+    provenance: 'network',
     async listAllowances(owner, signal, minSlot) {
       if (owner === null) throw new WalletRequiredError()
       const response = await client.listAllowances(owner, signal, minSlot)
@@ -284,6 +303,35 @@ export function createApiSource(
   }
 }
 
+/** Nothing of a replay is kept between visits: the recording itself is the copy. */
+const NO_STORE: ListStore = { save: () => {}, read: () => null, clear: () => {} }
+
+/**
+ * The recorded demo (`T058`). The live source over a client whose `fetch`
+ * answers from the recording — so every answer passes the same schemas and the
+ * same model as a live one — minus everything that would act on the network:
+ * no actions, no plans, no stored copy. The wallet is the recording's, not the
+ * connected one.
+ */
+export function createSnapshotSource(
+  load: SnapshotLoader = loadDemoSnapshot,
+  stage: StageStore = replayStage,
+): AllowanceSource {
+  const recorded = createApiSource(createApiClient('', replayFetch(load, stage)), NO_STORE)
+  return {
+    ...recorded,
+    kind: 'snapshot',
+    actions: null,
+    requiresWallet: false,
+    provenance: 'recorded',
+    async listAllowances(_owner, signal) {
+      return recorded.listAllowances((await load()).owner, signal)
+    },
+    storedList: () => null,
+    plans: null,
+  }
+}
+
 export class UnknownSourceError extends Error {
   constructor(value: string) {
     super(
@@ -295,8 +343,15 @@ export class UnknownSourceError extends Error {
   }
 }
 
+/** The build mode of the recorded demo (`T058`). */
+export const REPLAY_MODE = 'replay'
+
 /**
  * Джерело з оточення збірки. Незадане — `api`.
+ *
+ * A build in the `replay` mode (`vite build --mode replay`, `T058`) is always
+ * `snapshot`: the mode is asked for the recording, and a variable left in
+ * `.env` cannot quietly override it.
  *
  * Замовчування саме таке, а не `mock`, і це рішення про честь, а не про
  * зручність: мок показує вигадані числа під виглядом дозволів гаманця, і
@@ -304,6 +359,7 @@ export class UnknownSourceError extends Error {
  * Мок треба попросити. **Невідома** назва не підмінюється мовчки ні в який бік.
  */
 export function sourceKindFromEnv(env: Record<string, string | undefined>): SourceKind {
+  if (env.MODE === REPLAY_MODE) return 'snapshot'
   const value = env.VITE_DATA_SOURCE
   if (value === undefined || value === '') return 'api'
   if (!(SOURCE_KINDS as readonly string[]).includes(value)) throw new UnknownSourceError(value)
@@ -322,7 +378,9 @@ export function createSource(
   env: Record<string, string | undefined>,
   fetchImpl: typeof fetch = fetch,
 ): AllowanceSource {
-  if (sourceKindFromEnv(env) === 'mock') return createMockSource()
+  const kind = sourceKindFromEnv(env)
+  if (kind === 'mock') return createMockSource()
+  if (kind === 'snapshot') return createSnapshotSource()
   return createApiSource(createApiClient(apiBaseUrlFromEnv(env), fetchImpl))
 }
 

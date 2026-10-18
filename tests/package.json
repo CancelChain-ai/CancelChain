@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "seed": "tsx fixtures/seed.ts",
+    "demo": "tsx fixtures/demo.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "perf": "tsx perf/run.ts"

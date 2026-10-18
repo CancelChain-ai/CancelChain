@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "replay": "vite build --mode replay --outDir dist/replay && vite preview --mode replay --outDir dist/replay --port 4174 --strictPort",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },

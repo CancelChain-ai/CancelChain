@@ -83,8 +83,8 @@ describe('createSource', () => {
   })
 
   it('says whether there is a network behind it', () => {
-    expect(createSource({}, fetch).onNetwork).toBe(true)
-    expect(createSource({ VITE_DATA_SOURCE: 'mock' }, fetch).onNetwork).toBe(false)
+    expect(createSource({}, fetch).provenance).toBe('network')
+    expect(createSource({ VITE_DATA_SOURCE: 'mock' }, fetch).provenance).toBe('invented')
   })
 })
 

@@ -9,6 +9,7 @@ import { useAllowance } from './lib/useAllowance'
 import { useAllowances } from './lib/useAllowances'
 import { useFeed } from './lib/useFeed'
 import { usePush } from './lib/usePush'
+import { useReplay } from './lib/useReplay'
 import { useStream } from './lib/useStream'
 import Subscriptions from './pages/Subscriptions'
 
@@ -16,6 +17,10 @@ const Subscription = lazy(() => import('./pages/Subscription'))
 const Subscribe = lazy(() => import('./pages/Subscribe'))
 const SubscribeView = lazy(() => import('./SubscribeView'))
 const Merchant = lazy(() => import('./pages/Merchant'))
+/** Only a replay (`T058`) shows it, so only a replay downloads it. */
+const ReplayBar = lazy(() =>
+  import('./components/ReplayBar').then((module) => ({ default: module.ReplayBar })),
+)
 
 type View = 'subscriptions' | 'detail' | 'subscribe' | 'merchant'
 
@@ -34,6 +39,13 @@ const TABS: { id: View; label: string }[] = [
  * задачею — `T024` зняв `detail`, `T036` зніме `subscribe`, `T052` — `merchant`.
  */
 const MOCK_ONLY_VIEWS: View[] = ['merchant']
+
+/**
+ * A recording (`T058`) holds the wallet's list and its cards, nothing else: the
+ * subscribe screen would need a live plan, and the merchant panel is still M0.
+ */
+const REPLAYING = source.provenance === 'recorded'
+const SHOWN_TABS = REPLAYING ? TABS.filter((tab) => tab.id === 'subscriptions') : TABS
 
 /**
  * The plan a subscribe link points at: `?plan=<address>`. A merchant's link
@@ -77,7 +89,7 @@ const App = () => {
   const [view, setView] = useState<View>(() =>
     ALLOWANCE_ON_LOAD !== null
       ? 'detail'
-      : planFromLocation() === null
+      : planFromLocation() === null || REPLAYING
         ? 'subscriptions'
         : 'subscribe',
   )
@@ -106,6 +118,8 @@ const App = () => {
   const live = useStream(owner)
   /** Notifications in this browser (`T043`); the switch sits on the list. */
   const push = usePush(owner)
+  /** The recording and its stage when the source is one (`T058`). */
+  const replay = useReplay()
 
   const openPlan = (pda: string) => {
     setPlanPda(pda)
@@ -177,11 +191,15 @@ const App = () => {
         }
       : {}
 
-  const walletLabel = source.requiresWallet
-    ? owner === null
+  const walletLabel = REPLAYING
+    ? replay === null
       ? null
-      : shortenAddress(owner)
-    : WALLET
+      : shortenAddress(replay.snapshot.owner)
+    : source.requiresWallet
+      ? owner === null
+        ? null
+        : shortenAddress(owner)
+      : WALLET
 
   return (
     <div className="min-h-screen bg-ground text-ink">
@@ -190,14 +208,16 @@ const App = () => {
           <button type="button" onClick={() => setView('subscriptions')} className="text-left">
             <span className="block text-[14px] font-medium tracking-tight">CancelChain</span>
             <span className="mt-1 block text-[11px] text-ink/45">
-              {source.onNetwork
+              {source.provenance === 'network'
                 ? `Live ${cluster} — every permission granted from the connected wallet.`
-                : 'Demo — four screens, invented data, nothing on a network.'}
+                : source.provenance === 'recorded'
+                  ? 'Recorded from devnet — a replay of what the network answered, nothing live.'
+                  : 'Demo — four screens, invented data, nothing on a network.'}
             </span>
           </button>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <nav className="flex flex-wrap gap-x-5 gap-y-1">
-              {TABS.map((tab) => {
+              {SHOWN_TABS.map((tab) => {
                 const active = view === tab.id || (view === 'detail' && tab.id === 'subscriptions')
                 return (
                   <button
@@ -215,14 +235,24 @@ const App = () => {
                 )
               })}
             </nav>
-            <WalletMenu />
+            {!REPLAYING && <WalletMenu />}
           </div>
         </div>
       </header>
 
       <main className="mx-auto max-w-[1080px] px-5 py-10 sm:px-8 sm:py-14">
+        {replay !== null && (
+          <Suspense fallback={null}>
+            <ReplayBar
+              snapshot={replay.snapshot}
+              stageId={replay.stageId}
+              onStage={replay.showStage}
+              explorerUrl={(signature) => explorerTxUrl(signature, replay.snapshot.cluster)}
+            />
+          </Suspense>
+        )}
         <Suspense fallback={<p className="text-[13px] text-ink/55">Loading this screen…</p>}>
-          {source.onNetwork && MOCK_ONLY_VIEWS.includes(view) && (
+          {source.provenance === 'network' && MOCK_ONLY_VIEWS.includes(view) && (
             <p className="mb-8 rounded-[10px] border border-dashed border-hairline px-4 py-3 text-[12px] text-ink/55">
               This screen is still the M0 prototype: invented merchants, invented numbers, nothing
               read from {cluster}. Only the list of permissions is live.
@@ -235,7 +265,7 @@ const App = () => {
                 <Subscriptions
                   state={allowances}
                   walletLabel={walletLabel}
-                  onNetwork={source.onNetwork}
+                  provenance={source.provenance}
                   onOpen={openDetail}
                   cancel={cancel}
                   live={live}
@@ -252,7 +282,7 @@ const App = () => {
                   <Subscriptions
                     state={allowances}
                     walletLabel={walletLabel}
-                    onNetwork={source.onNetwork}
+                    provenance={source.provenance}
                     onOpen={openDetail}
                     cancel={cancel}
                     live={live}
@@ -270,6 +300,7 @@ const App = () => {
                 // будується тут і приходить туди готовим.
                 explorerUrl={(signature) => explorerTxUrl(signature, cluster)}
                 explorerAddressUrl={(address) => explorerAddressUrl(address, cluster)}
+                recorded={REPLAYING}
                 {...demoActions}
               />
             ))}

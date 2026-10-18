@@ -43,7 +43,7 @@ export function usePush(
   owner: Address | null,
   controller: () => PushController = defaultController,
 ): PushControls | null {
-  const enabled = source.onNetwork && owner !== null
+  const enabled = source.provenance === 'network' && owner !== null
   const [status, setStatus] = useState<PushStatus | 'checking'>('checking')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -52,7 +52,7 @@ export function usePush(
   ownerNow.current = owner
 
   useEffect(() => {
-    if (!source.onNetwork || owner === null) return
+    if (source.provenance !== 'network' || owner === null) return
     let current = true
     setStatus('checking')
     setError(null)
