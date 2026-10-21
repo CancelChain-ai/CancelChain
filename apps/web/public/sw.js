@@ -1,8 +1,9 @@
 /**
  * CancelChain's service worker: Web Push (`T043`) and the app's own files (`SC-008`).
  *
- * The cache holds the page and its `assets/` — never an answer of the API, which
- * lives on another origin and is not touched here. A returning visit gets the app
+ * The cache holds the page and every file of its build (`shell.json`), the lazy
+ * screens too — never an answer of the API, which lives on another origin and is
+ * not touched here. A returning visit gets the app
  * from this cache at once and asks the network for a newer one behind it; the
  * permissions on screen come from the page's own saved copy, which says it is
  * one (`lib/storedList.ts`), until the network answers.
@@ -112,30 +113,84 @@ function assetsOf(html, scope) {
 }
 
 /**
- * The page goes into the cache only with every file it names: a cached page
- * whose script is missing is a blank screen. A new page also drops the files of
- * the old one; a lazily loaded file of the new one is fetched again when asked for.
+ * Every file of the build, as `shell.json` beside the page lists it
+ * (`buildPlugins.ts`): the lazily loaded screens too. A deploy takes the old
+ * files off the server, so a screen of the old version that is not cached by
+ * then cannot be opened by the page that draws it. `null` — no list to be had.
  */
-async function storeShell(response) {
+async function buildOf(scope) {
+  try {
+    const response = await fetch(`${scope}shell.json`, { cache: 'no-cache' })
+    if (!response.ok) return null
+    const list = await response.json()
+    if (list === null || !Array.isArray(list.assets)) return null
+    return list.assets
+      .filter((path) => typeof path === 'string')
+      .map((path) => new URL(path, scope).href)
+      .filter((url) => url.startsWith(`${scope}assets/`))
+  } catch {
+    return null
+  }
+}
+
+/** The files of the version in the cache now, as stored with its page. */
+async function storedFiles(cache, scope) {
+  const stored = await cache.match(`${scope}shell.json`)
+  if (stored === undefined) return null
+  try {
+    const files = await stored.json()
+    return Array.isArray(files) ? files : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The page goes into the cache only with every file of its build: a cached page
+ * whose script is missing is a blank screen, and one whose lazy screen is
+ * missing breaks on the first click. A list that does not name the page's own
+ * files is of another deploy, and the old page stays.
+ *
+ * A new version drops only the files of the one before the current: a tab may
+ * still be drawing the current one and open its lazy screens after the switch.
+ * Without the current version's list nothing is dropped — it is not known which
+ * of the files are its.
+ */
+async function storeShell(response, build) {
   const scope = self.registration.scope
   const cache = await caches.open(SHELL_CACHE)
   const html = await response.clone().text()
-  const assets = assetsOf(html, scope)
-  for (const url of assets) {
-    if ((await cache.match(url)) === undefined) await cache.add(url)
-  }
+  const named = assetsOf(html, scope)
+  if (build !== null && named.some((url) => !build.includes(url))) return
+  const files = [...new Set([...named, ...(build ?? [])])]
+  await Promise.all(
+    files.map(async (url) => {
+      if ((await cache.match(url)) === undefined) await cache.add(url)
+    }),
+  )
   const previous = await cache.match(scope)
+  const changed = previous === undefined || (await previous.text()) !== html
+  if (!changed) {
+    if (build !== null) await cache.put(`${scope}shell.json`, new Response(JSON.stringify(files)))
+    return
+  }
+  const current = previous === undefined ? [] : await storedFiles(cache, scope)
+  // Without a list the new version's own files are not known either, and the
+  // one after it must not drop any of them.
+  if (build === null) await cache.delete(`${scope}shell.json`)
+  else await cache.put(`${scope}shell.json`, new Response(JSON.stringify(files)))
   await cache.put(scope, response)
-  if (previous !== undefined && (await previous.text()) !== html) {
-    for (const request of await cache.keys()) {
-      if (request.url !== scope && !assets.includes(request.url)) await cache.delete(request)
-    }
+  if (current === null || build === null) return
+  const kept = new Set([scope, `${scope}shell.json`, ...files, ...current])
+  for (const request of await cache.keys()) {
+    if (!kept.has(request.url)) await cache.delete(request)
   }
 }
 
 async function refreshShell() {
-  const response = await fetch(self.registration.scope, { cache: 'no-cache' })
-  if (response.ok) await storeShell(response)
+  const scope = self.registration.scope
+  const [response, build] = await Promise.all([fetch(scope, { cache: 'no-cache' }), buildOf(scope)])
+  if (response.ok) await storeShell(response, build)
 }
 
 function quietly(promise) {
@@ -151,7 +206,12 @@ async function shellResponse(event) {
     return cached
   }
   const response = await fetch(event.request)
-  if (response.ok) event.waitUntil(quietly(storeShell(response.clone())))
+  if (response.ok) {
+    const stored = response.clone()
+    event.waitUntil(
+      quietly(buildOf(self.registration.scope).then((build) => storeShell(stored, build))),
+    )
+  }
   return response
 }
 

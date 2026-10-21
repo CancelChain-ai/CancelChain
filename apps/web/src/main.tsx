@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 
 import App from './App'
 import { WalletProvider } from './chain/WalletProvider'
+import { reloadOnStaleBuild } from './lib/staleBuild'
 
 const rootElement = document.getElementById('root')
 if (!rootElement) throw new Error('Failed to find the root element')
@@ -30,6 +31,8 @@ createRoot(rootElement).render(
  * (`SC-008`). Registered after `load`, so it never competes with this visit for
  * the network, and only in a build: in development it would serve stale modules.
  */
+reloadOnStaleBuild(import.meta.url)
+
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     const scope = import.meta.env.BASE_URL

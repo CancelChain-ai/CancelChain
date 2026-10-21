@@ -74,6 +74,42 @@ export function initialJsBytes(bundle: Record<string, BuiltChunk | { type: 'asse
 }
 
 /**
+ * Every built file under `assets/`, relative to the page: what the service
+ * worker keeps of a version (`public/sw.js`), lazy screens included. Files in
+ * `public/` are not part of a version and stay out.
+ */
+export function shellFiles(bundle: Record<string, { fileName: string }>, assetsDir: string) {
+  return Object.values(bundle)
+    .map((output) => output.fileName)
+    .filter((name) => name.startsWith(`${assetsDir}/`))
+    .sort()
+}
+
+/**
+ * `shell.json` beside the page: `{ assets }` of this build. Without it a deploy
+ * takes the lazy screens a returning visit has not opened yet off the server
+ * before that visit asks for them (`T063`).
+ */
+export function shellManifest(): Plugin {
+  let assetsDir = 'assets'
+  return {
+    name: 'cancelchain:shell-manifest',
+    apply: 'build',
+    enforce: 'post',
+    configResolved(config) {
+      assetsDir = config.build.assetsDir
+    },
+    generateBundle(_, bundle) {
+      this.emitFile({
+        type: 'asset',
+        fileName: 'shell.json',
+        source: `${JSON.stringify({ assets: shellFiles(bundle, assetsDir) })}\n`,
+      })
+    },
+  }
+}
+
+/**
  * Fails the build when the first screen's JavaScript outgrows the budget. A
  * dependency that slips into the entry chunk is found here, not by the next
  * `SC-008` run on the deployed site.

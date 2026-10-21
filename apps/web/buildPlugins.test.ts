@@ -1,6 +1,6 @@
 import { gzipSync } from 'node:zlib'
 import { describe, expect, it } from 'vitest'
-import { type BuiltChunk, initialJsBytes, preconnectTag } from './buildPlugins'
+import { type BuiltChunk, initialJsBytes, preconnectTag, shellFiles } from './buildPlugins'
 
 describe('preconnectTag', () => {
   it('opens the API origin early, for a CORS request', () => {
@@ -49,5 +49,21 @@ describe('initialJsBytes', () => {
 
   it('is zero without an entry', () => {
     expect(initialJsBytes({ 'a.js': chunk('a.js', 'a') })).toEqual({ bytes: 0, files: [] })
+  })
+})
+
+describe('shellFiles', () => {
+  it('lists every built file under assets/, the lazy ones too, and nothing else', () => {
+    expect(
+      shellFiles(
+        {
+          'assets/index-A.js': { fileName: 'assets/index-A.js' },
+          'assets/Card-A.js': { fileName: 'assets/Card-A.js' },
+          'assets/index-A.css': { fileName: 'assets/index-A.css' },
+          'index.html': { fileName: 'index.html' },
+        },
+        'assets',
+      ),
+    ).toEqual(['assets/Card-A.js', 'assets/index-A.css', 'assets/index-A.js'])
   })
 })

@@ -36,7 +36,8 @@ function fakeCaches() {
         entries.set(url, response)
       },
       keys: async () => [...entries.keys()].map((url) => ({ url })),
-      delete: async (request: { url: string }) => entries.delete(request.url),
+      delete: async (request: string | { url: string }) =>
+        entries.delete(typeof request === 'string' ? request : request.url),
     }
   }
   let serve: (url: string) => Promise<Response> = async () => new Response(null, { status: 404 })
@@ -247,20 +248,111 @@ describe('the app shell (SC-008)', () => {
     `<link rel="stylesheet" href="/CancelChain/assets/index.css"><link rel="icon" href="data:x">`
   const asset = (name: string) => `${SCOPE}assets/${name}`
 
-  function deployed(script: string): Served {
+  /** A deploy as `vite build` leaves it: the page, `shell.json` and every file it lists. */
+  function deployed(script: string, lazy: string[] = []): Served {
+    const files = [script, 'index.css', ...lazy]
     return {
       [SCOPE]: { status: 200, body: page(script) },
-      [asset(script)]: { status: 200, body: `// ${script}` },
-      [asset('index.css')]: { status: 200, body: 'body{}' },
+      [`${SCOPE}shell.json`]: {
+        status: 200,
+        body: JSON.stringify({ assets: files.map((name) => `assets/${name}`) }),
+      },
+      ...Object.fromEntries(
+        files.map((name) => [asset(name), { status: 200, body: `// ${name}` }]),
+      ),
     }
   }
+
+  /** A deploy replaces the site: nothing of the old build is left on the server. */
+  function redeploy(sw: ReturnType<typeof worker>, script: string, lazy: string[] = []) {
+    for (const url of Object.keys(sw.served)) delete sw.served[url]
+    Object.assign(sw.served, deployed(script, lazy))
+  }
+
+  const cachedFiles = (sw: ReturnType<typeof worker>) =>
+    [...(sw.caches.stores.get('cancelchain-shell-v1')?.keys() ?? [])]
+      .filter((url) => url.startsWith(`${SCOPE}assets/`))
+      .sort()
+
+  it('keeps every file of the build, the lazy screens with it, before anyone opens them', async () => {
+    const sw = worker([], deployed('index-A.js', ['Card-A.js']))
+    await sw.install()
+    expect(cachedFiles(sw)).toEqual(
+      [asset('Card-A.js'), asset('index-A.js'), asset('index.css')].sort(),
+    )
+  })
+
+  it('serves a lazy screen of the old version to the page that draws it, after a deploy', async () => {
+    const sw = worker([], deployed('index-A.js', ['Card-A.js']))
+    await sw.install()
+    redeploy(sw, 'index-B.js', ['Card-B.js'])
+
+    // The returning visit draws A, and B is stored behind it.
+    expect((await sw.request(SCOPE))?.body).toBe(page('index-A.js'))
+    expect(await sw.request(asset('Card-A.js'), 'cors')).toEqual({
+      status: 200,
+      body: '// Card-A.js',
+    })
+  })
+
+  it('drops a version only once a newer one has replaced the one after it', async () => {
+    const sw = worker([], deployed('index-A.js', ['Card-A.js']))
+    await sw.install()
+    redeploy(sw, 'index-B.js', ['Card-B.js'])
+    await sw.request(SCOPE)
+    expect(cachedFiles(sw)).toEqual(
+      [
+        asset('Card-A.js'),
+        asset('Card-B.js'),
+        asset('index-A.js'),
+        asset('index-B.js'),
+        asset('index.css'),
+      ].sort(),
+    )
+
+    redeploy(sw, 'index-C.js', ['Card-C.js'])
+    expect((await sw.request(SCOPE))?.body).toBe(page('index-B.js'))
+    expect(cachedFiles(sw)).toEqual(
+      [
+        asset('Card-B.js'),
+        asset('Card-C.js'),
+        asset('index-B.js'),
+        asset('index-C.js'),
+        asset('index.css'),
+      ].sort(),
+    )
+  })
+
+  it('keeps the old page when the list and the page are of different deploys', async () => {
+    const sw = worker([], deployed('index-A.js'))
+    await sw.install()
+    // The page of B with the list of A: caught between two uploads of a deploy.
+    sw.served[SCOPE] = { status: 200, body: page('index-B.js') }
+    sw.served[asset('index-B.js')] = { status: 200, body: '// index-B.js' }
+
+    await sw.request(SCOPE)
+    expect((await sw.request(SCOPE))?.body).toBe(page('index-A.js'))
+  })
+
+  it('drops nothing it cannot account for, when the version it replaces came without a list', async () => {
+    const sw = worker([], deployed('index-A.js'))
+    delete sw.served[`${SCOPE}shell.json`]
+    await sw.install()
+    // A lazy screen of A, cached when it was opened.
+    sw.served[asset('Card-A.js')] = { status: 200, body: '// Card-A.js' }
+    await sw.request(asset('Card-A.js'), 'cors')
+    redeploy(sw, 'index-B.js')
+
+    await sw.request(SCOPE)
+    expect(cachedFiles(sw)).toContain(asset('Card-A.js'))
+  })
 
   it('readies the next visit on install: the page with every file it names', async () => {
     const sw = worker([], deployed('index-A.js'))
     await sw.install()
     const shell = sw.caches.stores.get('cancelchain-shell-v1')
     expect([...(shell?.keys() ?? [])].sort()).toEqual(
-      [SCOPE, asset('index-A.js'), asset('index.css')].sort(),
+      [SCOPE, `${SCOPE}shell.json`, asset('index-A.js'), asset('index.css')].sort(),
     )
   })
 
@@ -271,34 +363,31 @@ describe('the app shell (SC-008)', () => {
 
     const answered = await sw.request(`${SCOPE}?plan=${PDA}`)
     expect(answered?.body).toBe(page('index-A.js'))
-    expect(sw.fetched).toEqual([SCOPE])
+    expect(sw.fetched).toEqual([SCOPE, `${SCOPE}shell.json`])
 
     expect(await sw.request(asset('index-A.js'), 'cors')).toEqual({
       status: 200,
       body: '// index-A.js',
     })
-    expect(sw.fetched).toEqual([SCOPE])
+    expect(sw.fetched).toEqual([SCOPE, `${SCOPE}shell.json`])
   })
 
-  it('switches to a new deploy only with all its files, and drops the old ones', async () => {
+  it('switches to a new deploy only with all its files', async () => {
     const sw = worker([], deployed('index-A.js'))
     await sw.install()
-    Object.assign(sw.served, deployed('index-B.js'))
-    delete sw.served[asset('index-A.js')]
+    redeploy(sw, 'index-B.js')
 
     // This visit still draws the version it has; the next one gets the new.
     expect((await sw.request(SCOPE))?.body).toBe(page('index-A.js'))
     expect((await sw.request(SCOPE))?.body).toBe(page('index-B.js'))
-    const shell = sw.caches.stores.get('cancelchain-shell-v1')
-    expect([...(shell?.keys() ?? [])].sort()).toEqual(
-      [SCOPE, asset('index-B.js'), asset('index.css')].sort(),
-    )
+    expect(cachedFiles(sw)).toContain(asset('index-B.js'))
   })
 
   it('keeps the old page when a file of the new one cannot be fetched', async () => {
     const sw = worker([], deployed('index-A.js'))
     await sw.install()
-    sw.served[SCOPE] = { status: 200, body: page('index-B.js') }
+    redeploy(sw, 'index-B.js', ['Card-B.js'])
+    delete sw.served[asset('Card-B.js')]
 
     await sw.request(SCOPE)
     expect((await sw.request(SCOPE))?.body).toBe(page('index-A.js'))
@@ -310,6 +399,12 @@ describe('the app shell (SC-008)', () => {
     sw.fetched.length = 0
     expect((await sw.request(asset('index-A.js'), 'cors'))?.body).toBe('// index-A.js')
     expect(sw.fetched).toEqual([])
+  })
+
+  it('keeps the whole build after a first visit it answered from the network', async () => {
+    const sw = worker([], deployed('index-A.js', ['Card-A.js']))
+    await sw.request(SCOPE)
+    expect(cachedFiles(sw)).toContain(asset('Card-A.js'))
   })
 
   it('does not cache a failed answer', async () => {

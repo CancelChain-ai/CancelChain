@@ -1,6 +1,6 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
-import { bundleBudget, preconnectToApi } from './buildPlugins'
+import { bundleBudget, preconnectToApi, shellManifest } from './buildPlugins'
 
 /**
  * `VITE_API_URL` не задано — клієнт стукає у власний origin (`lib/source.ts`),
@@ -52,7 +52,7 @@ export default defineConfig({
    */
   envDir: '../../',
   envPrefix: ['VITE_'],
-  plugins: [react(), preconnectToApi(), bundleBudget(FIRST_SCREEN_JS_BUDGET)],
+  plugins: [react(), preconnectToApi(), bundleBudget(FIRST_SCREEN_JS_BUDGET), shellManifest()],
   server: {
     port: 5173,
     proxy: { '/v1': { target: API_TARGET, changeOrigin: true } },
