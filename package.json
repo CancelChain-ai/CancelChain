@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "pnpm -r --parallel dev",
+    "demo": "pnpm --filter @cancelchain/merchant-sim start demo",
     "build": "pnpm -r build",
     "test": "pnpm -r --parallel test",
     "typecheck": "pnpm -r --parallel typecheck",

@@ -13,13 +13,14 @@
     "merchant-sim": "./src/cli.ts"
   },
   "scripts": {
-    "start": "tsx src/cli.ts",
+    "start": "tsx --env-file-if-exists=../../.env src/cli.ts",
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "@cancelchain/chain": "workspace:*",
     "@cancelchain/shared": "workspace:*",
+    "@solana-program/system": "0.13.0",
     "@solana-program/token": "0.15.0",
     "@solana/kit": "catalog:",
     "@solana/subscriptions": "catalog:",

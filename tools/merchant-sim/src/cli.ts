@@ -9,6 +9,15 @@ import {
   resolveTokenProgram,
 } from './charge.js'
 import { merchantSimConfigFromEnv } from './config.js'
+import {
+  chargeDemo,
+  DEFAULT_API_URL,
+  DEFAULT_APP_URL,
+  demoConfigFromEnv,
+  demoStatus,
+  prepareDemo,
+  readOwnerKeyBase58,
+} from './demo.js'
 import { createMerchantSim, describeMerchant, type MerchantSim } from './merchant.js'
 import {
   createPlan,
@@ -29,7 +38,7 @@ import {
  * лягає в план і що означає відповідь мережі, живуть у `charge.ts` і `plan.ts`
  * — інакше їх не було б чим перевірити, крім запуску процесу.
  *
- * Повний сценарій демо (`T056`) стає сюди далі.
+ * `demo` — сценарій показу (`T056`), його кроки живуть у `demo.ts`.
  */
 
 const USAGE = `merchant-sim <command>
@@ -73,13 +82,29 @@ Plan flags:
   --no-preflight                Send without simulating first. Off by default: a doomed plan
                                 proves nothing, so the fee is better saved.
 
-Not implemented yet: demo (the full reproducible scenario).
+  demo prepare | status | charge | owner-key
+                                The show on devnet, reproducible (T056):
+    prepare                     Make what the show needs, keeping what is already there: the
+                                owner key (if missing), SOL, the owner's token account, A (a
+                                recurring permission to this merchant), B (to a second
+                                recipient), a fresh named plan. Prints the links.
+    status                      What the owner holds on chain now, and the links.
+    charge                      After the owner cancelled A in the browser: try to pull A's
+                                ceiling and print the protocol's refusal with its signature.
+                                Sends nothing while A is still on chain.
+    owner-key                   The owner key in base58, for a wallet's "Import private key".
+                                Only into a pipe (| clip), never onto the terminal.
 
 Environment:
   SOLANA_CLUSTER              devnet | testnet | localnet — never mainnet-beta
   SOLANA_RPC_URL              node URL
   USDC_MINT                   settlement mint
   MERCHANT_SIM_KEYPAIR_PATH   path to a *.keypair.json outside the repository
+  DEMO_OWNER_KEYPAIR_PATH     demo only: the owner key, a *.keypair.json outside the repository
+  DEMO_STATE_PATH             demo only. Default: next to the owner key, *.demo.json
+  DEMO_APP_URL                demo only. Default: ${DEFAULT_APP_URL}
+  DEMO_API_URL                demo only. Default: ${DEFAULT_API_URL}
+  DEMO_AUTH_DOMAIN            demo only: the API's AUTH_DOMAIN. Default: the host of DEMO_APP_URL
 `
 
 /** Лампорти → SOL для показу. Точність тут не потрібна, це діагностика. */
@@ -345,6 +370,38 @@ async function plan(argv: readonly string[]): Promise<void> {
   )
 }
 
+const printLine = (line: string): void => {
+  process.stdout.write(`${line}
+`)
+}
+
+async function demo(argv: readonly string[]): Promise<void> {
+  const [step, ...extra] = argv
+  if (extra.length > 0) throw new UsageError(`demo ${step} takes no arguments`)
+  if (step === 'prepare') {
+    await prepareDemo(demoConfigFromEnv(process.env), printLine)
+    return
+  }
+  if (step === 'status') {
+    await demoStatus(demoConfigFromEnv(process.env), printLine)
+    return
+  }
+  if (step === 'charge') {
+    const verdict = await chargeDemo(demoConfigFromEnv(process.env), printLine)
+    // A refusal is the show working; anything else — nothing sent, or a charge
+    // that went through — is the show failing, and says so with the exit code.
+    if (verdict?.outcome !== 'rejected') process.exitCode = 1
+    return
+  }
+  if (step === 'owner-key') {
+    // A secret on the terminal stays in its scrollback.
+    if (process.stdout.isTTY) throw new UsageError('owner-key prints a secret: pipe it (| clip)')
+    process.stdout.write(await readOwnerKeyBase58(demoConfigFromEnv(process.env)))
+    return
+  }
+  throw new UsageError('demo needs a step: prepare | status | charge | owner-key')
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2)
   if (command === 'whoami') {
@@ -357,6 +414,10 @@ async function main(): Promise<void> {
   }
   if (command === 'plan') {
     await plan(rest)
+    return
+  }
+  if (command === 'demo') {
+    await demo(rest)
     return
   }
   process.stdout.write(USAGE)
